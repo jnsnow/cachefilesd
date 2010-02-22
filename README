@@ -1,0 +1,274 @@
+	       ===============================================
+	       CacheFiles: CACHE ON ALREADY MOUNTED FILESYSTEM
+	       ===============================================
+
+Contents:
+
+ (*) Overview.
+
+ (*) Requirements.
+
+ (*) Configuration.
+
+ (*) Starting the cache.
+
+ (*) Things to avoid.
+
+
+========
+OVERVIEW
+========
+
+CacheFiles is a caching backend that's meant to use as a cache a directory on
+an already mounted filesystem of a local type (such as Ext3).
+
+CacheFiles uses a userspace daemon to do some of the cache management - such as
+reaping stale nodes and culling.  This is called cachefilesd and lives in
+/sbin.
+
+The filesystem and data integrity of the cache are only as good as those of the
+filesystem providing the backing services.  Note that CacheFiles does not
+attempt to journal anything since the journalling interfaces of the various
+filesystems are very specific in nature.
+
+CacheFiles creates a proc-file - "/proc/fs/cachefiles" - that is used for
+communication with the daemon.  Only one thing may have this open at once, and
+whilst it is open, a cache is at least partially in existence.  The daemon
+opens this and sends commands down it to control the cache.
+
+CacheFiles is currently limited to a single cache.
+
+CacheFiles attempts to maintain at least a certain percentage of free space on
+the filesystem, shrinking the cache by culling the objects it contains to make
+space if necessary - see the "Cache Culling" section.  This means it can be
+placed on the same medium as a live set of data, and will expand to make use of
+spare space and automatically contract when the set of data requires more
+space.
+
+
+============
+REQUIREMENTS
+============
+
+The use of CacheFiles and its daemon requires the following features to be
+available in the system and in the cache filesystem:
+
+	- dnotify.
+
+	- extended attributes (xattrs).
+
+	- openat() and friends.
+
+	- bmap() support on files in the filesystem (FIBMAP ioctl).
+
+	- The use of bmap() to detect a partial page at the end of the file.
+
+It is strongly recommended that the "dir_index" option is enabled on Ext3
+filesystems being used as a cache.
+
+
+=============
+CONFIGURATION
+=============
+
+The cache is configured by a script in /etc/cachefilesd.conf.  These commands
+set up cache ready for use.  The following script commands are available:
+
+ (*) brun <N>%
+ (*) bcull <N>%
+ (*) bstop <N>%
+
+	Configure the culling limits.  Optional.  See the section on culling
+	The defaults are 7%, 5% and 1% respectively.
+
+ (*) dir <path>
+
+	Specify the directory containing the root of the cache.  Mandatory.
+
+ (*) tag <name>
+
+	Specify a tag to FS-Cache to use in distinguishing multiple caches.
+	Optional.  The default is "CacheFiles".
+
+ (*) debug <mask>
+
+	Specify a numeric bitmask to control debugging in the kernel module.
+	Optional.  The default is zero (all off).
+
+
+==================
+STARTING THE CACHE
+==================
+
+The cache is started by running the daemon.  The daemon opens the cache proc
+file, configures the cache and tells it to begin caching.  At that point the
+cache binds to fscache and the cache becomes live.
+
+The daemon is run as follows:
+
+	/sbin/cachefilesd [-d]* [-s] [-n] [-f <configfile>]
+
+The flags are:
+
+ (*) -d
+
+	Increase the debugging level.  This can be specified multiple times and
+	is cumulative with itself.
+
+ (*) -s
+
+	Send messages to stderr instead of syslog.
+
+ (*) -n
+
+	Don't daemonise and go into background.
+
+ (*) -f <configfile>
+
+	Use an alternative configuration file rather than the default one.
+
+
+===============
+THINGS TO AVOID
+===============
+
+Do not mount other things within the cache as this will cause problems.  The
+kernel module contains its own very cut-down path walking facility that ignores
+mountpoints, but the daemon can't avoid them.
+
+Do not create, rename or unlink files and directories in the cache whilst the
+cache is active, as this may cause the state to become uncertain.
+
+Renaming files in the cache might make objects appear to be other objects (the
+filename is part of the lookup key).
+
+Do not change or remove the extended attributes attached to cache files by the
+cache as this will cause the cache state management to get confused.
+
+Do not create files or directories in the cache, lest the cache get confused or
+serve incorrect data.
+
+Do not chmod files in the cache.  The module creates things with minimal
+permissions to prevent random users being able to access them directly.
+
+
+=============
+CACHE CULLING
+=============
+
+The cache may need culling occasionally to make space.  This involves
+discarding objects from the cache that have been used less recently than
+anything else.  Culling is based on the access time of data objects.  Empty
+directories are culled if not in use.
+
+Cache culling is done on the basis of the percentage of blocks available in the
+underlying filesystem.  There are three "limits":
+
+ (*) brun
+
+     If the amount of available space in the cache rises above this limit, then
+     culling is turned off.
+
+ (*) bcull
+
+     If the amount of available space in the cache falls below this limit, then
+     culling is started.
+
+ (*) bstop
+
+     If the amount of available space in the cache falls below this limit, then
+     no further allocation of disk space is permitted until culling has raised
+     the amount above this limit again.
+
+These must be configured thusly:
+
+	0 <= bstop < bcull < brun < 100
+
+Note that these are percentages of available space, and do _not_ appear as 100
+minus the percentage displayed by the "df" program.
+
+The userspace daemon scans the cache to build up a table of cullable objects.
+These are then culled in least recently used order.  A new scan of the cache is
+started as soon as space is made in the table.  Objects will be skipped if
+their atimes have changed or if the kernel module says it is still using them.
+
+
+===============
+CACHE STRUCTURE
+===============
+
+The CacheFiles module will create two directories in the directory it was
+given:
+
+ (*) cache/
+
+ (*) graveyard/
+
+The active cache objects all reside in the first directory.  The CacheFiles
+kernel module moves any retired or culled objects that it can't simply unlink
+to the graveyard from which the daemon will actually delete them.
+
+The daemon uses dnotify to monitor the graveyard directory, and will delete
+anything that appears therein.
+
+
+The module represents index objects as directories with the filename "I..." or
+"J...".  Note that the "cache/" directory is itself a special index.
+
+Data objects are represented as files if they have no children, or directories
+if they do.  Their filenames all begin "D..." or "E...".  If represented as a
+directory, data objects will have a file in the directory called "data" that
+actually holds the data.
+
+Special objects are similar to data objects, except their filenames begin
+"S..." or "T...".
+
+
+If an object has children, then it will be represented as a directory.
+Immediately in the representative directory are a collection of directories
+named for hash values of the child object keys with an '@' prepended.  Into
+this directory, if possible, will be placed the representations of the child
+objects:
+
+	INDEX     INDEX      INDEX                             DATA FILES
+	========= ========== ================================= ================
+	cache/@4a/I03nfs/@30/Ji000000000000000--fHg8hi8400
+	cache/@4a/I03nfs/@30/Ji000000000000000--fHg8hi8400/@75/Es0g000w...DB1ry
+	cache/@4a/I03nfs/@30/Ji000000000000000--fHg8hi8400/@75/Es0g000w...N22ry
+	cache/@4a/I03nfs/@30/Ji000000000000000--fHg8hi8400/@75/Es0g000w...FP1ry
+
+
+If the key is so long that it exceeds NAME_MAX with the decorations added on to
+it, then it will be cut into pieces, the first few of which will be used to
+make a nest of directories, and the last one of which will be the objects
+inside the last directory.  The names of the intermediate directories will have
+'+' prepended:
+
+	J1223/@23/+xy...z/+kl...m/Epqr
+
+
+Note that keys are raw data, and not only may they exceed NAME_MAX in size,
+they may also contain things like '/' and NUL characters, and so they may not
+be suitable for turning directly into a filename.
+
+To handle this, CacheFiles will use a suitably printable filename directly and
+"base-64" encode ones that aren't directly suitable.  The two versions of
+object filenames indicate the encoding:
+
+	OBJECT TYPE	PRINTABLE	ENCODED
+	===============	===============	===============
+	Index		"I..."		"J..."
+	Data		"D..."		"E..."
+	Special		"S..."		"T..."
+
+Intermediate directories are always "@" or "+" as appropriate.
+
+
+Each object in the cache has an extended attribute label that holds the object
+type ID (required to distinguish special objects) and the auxiliary data from
+the netfs.  The latter is used to detect stale objects in the cache and update
+or retire them.
+
+
+Note that CacheFiles will erase from the cache any file it doesn't recognise or
+any file of an incorrect type (such as a FIFO file or a device file).

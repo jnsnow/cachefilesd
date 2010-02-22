@@ -1,0 +1,85 @@
+#!/bin/bash
+#
+# cachefilesd    Start up and shut down the cachefilesd daemon
+#
+# chkconfig: - 13 87
+# description: Starts user-level daemon that manages the caching files \
+#	       used by Network Filsystems
+
+# Source function library.
+. /etc/init.d/functions
+
+# Source networking configuration.
+if [ ! -f /etc/sysconfig/network ]; then
+    exit 0
+fi
+. /etc/sysconfig/network
+
+# Check that networking is up.
+[ "${NETWORKING}" = "no" ] && exit 0
+
+
+OPTIONS=""
+RETVAL=0
+LOCKFILE=/var/lock/subsys/cachefilesd
+MODPROBE=/sbin/modprobe
+MODPROBE_ARGS=""
+PROG="cachefilesd"
+
+[ ! -x /usr/sbin/$PROG ] && exit 0
+
+# Check for and source configuration file otherwise set defaults
+[ -f /etc/sysconfig/$PROG ] && . /etc/sysconfig/$PROG
+
+case "$1" in
+  start|condstart)
+	# Make sure the daemon is not already running.
+	if status $PROG > /dev/null ; then
+		exit 0
+	fi
+	rm -f $LOCKFILE
+
+	echo -n $"Starting $PROG: "
+
+	# Load the cachefiles module if needed  
+	[ -x "$MODPROBE" ] && {
+		if ! /sbin/lsmod | grep cachefiles > /dev/null ; then
+			 $MODPROBE cachefiles $MODPROBE_ARGS || exit 1
+		fi
+	}
+
+	# Start daemon.
+	daemon $PROG ${OPTIONS}
+	RETVAL=$?
+	echo
+	[ $RETVAL -eq 0 ] && touch $LOCKFILE
+	;;
+  stop)
+	# Stop daemon.
+	echo -n $"Shutting down RPC $PROG: "
+	killproc $PROG
+	RETVAL=$?
+	echo
+	[ $RETVAL -eq 0 ] && rm -f $LOCKFILE
+	;;
+  status)
+	status $PROG
+	RETVAL=$?
+	;;
+  restart|reload)
+	$0 stop
+	$0 start
+	RETVAL=$?
+	;;
+  condrestart)
+	if [ -f $LOCKFILE ]; then
+		$0 restart
+		RETVAL=$?
+	fi
+	;;
+  *)
+	echo $"Usage: $0 {start|stop|restart|condstart|condrestart|status}"
+	exit 1
+esac
+
+exit $RETVAL
