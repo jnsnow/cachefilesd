@@ -1,6 +1,6 @@
-/* cachefilesd.c: CacheFiles userspace management daemon
+/* CacheFiles userspace management daemon
  *
- * Copyright (C) 2006 Red Hat, Inc. All Rights Reserved.
+ * Copyright (C) 2006-2007 Red Hat, Inc. All Rights Reserved.
  * Written by David Howells (dhowells@redhat.com)
  *
  * This program is free software; you can redistribute it and/or
@@ -195,8 +195,8 @@ static void cachefilesd(void) __attribute__((noreturn));
 static void reap_graveyard(void);
 static void reap_graveyard_aux(const char *dirname);
 static void read_cache_state(void);
-static int is_object_in_use(int dirfd, const char *filename);
-static void cull_file(int dirfd, const char *filename);
+static int is_object_in_use(const char *filename);
+static void cull_file(const char *filename);
 static void build_cull_table(void);
 static void decant_cull_table(void);
 static void insert_into_cull_table(struct object *object);
@@ -761,14 +761,14 @@ static void read_cache_state(void)
 
 /*****************************************************************************/
 /*
- * find out if an object is in use
+ * find out if an object in the current working directory is in use
  */
-static int is_object_in_use(int dirfd, const char *filename)
+static int is_object_in_use(const char *filename)
 {
 	char buffer[NAME_MAX + 30];
 	int ret, n;
 
-	n = sprintf(buffer, "inuse %d %s", dirfd, filename);
+	n = sprintf(buffer, "inuse %s", filename);
 
 	/* command the module */
 	ret = write(cachefd, buffer, n);
@@ -781,15 +781,15 @@ static int is_object_in_use(int dirfd, const char *filename)
 
 /*****************************************************************************/
 /*
- * cull a file representing an object
- * - requests CacheFiles rename the object "<dirfd>/filename" to the graveyard
+ * cull a file representing an object in the current working directory
+ * - requests CacheFiles rename the object "<cwd>/filename" to the graveyard
  */
-static void cull_file(int dirfd, const char *filename)
+static void cull_file(const char *filename)
 {
 	char buffer[NAME_MAX + 30];
 	int ret, n;
 
-	n = sprintf(buffer, "cull %d %s", dirfd, filename);
+	n = sprintf(buffer, "cull %s", filename);
 
 	/* command the module */
 	ret = write(cachefd, buffer, n);
@@ -1120,6 +1120,9 @@ static void build_cull_table(void)
 
 	debug(2, "--> build_cull_table({%s})", curr->name);
 
+	if (fchdir(dirfd(curr->dir)) < 0)
+		oserror("Failed to change current directory");
+
 next:
 	/* read the next directory entry */
 	if (readdir_r(curr->dir, &dirent, &de) < 0) {
@@ -1139,19 +1142,17 @@ next:
 
 	debug(2, "readdir '%s'", dirent.d_name);
 
-	if (dirent.d_type == DT_UNKNOWN)
-		oserror("readdir returned unknown type");
+	switch (dirent.d_type) {
+	case DT_UNKNOWN:
+	case DT_DIR:
+	case DT_REG:
+		break;
+	default:
+		oserror("readdir returned unsupported type %d", dirent.d_type);
+	}
 
 	/* delete any funny looking files */
 	if (memchr("IDSJET+@", dirent.d_name[0], 8) == NULL)
-		goto found_unexpected_object;
-
-	if (dirent.d_type != DT_DIR &&
-	    (dirent.d_type != DT_REG ||
-	     dirent.d_name[0] == 'I' ||
-	     dirent.d_name[0] == 'J' ||
-	     dirent.d_name[0] == '@' ||
-	     dirent.d_name[0] == '+'))
 		goto found_unexpected_object;
 
 	/* see if this object is already known to us */
@@ -1160,6 +1161,14 @@ next:
 			goto next;
 		oserror("Failed to stat directory");
 	}
+
+	if (!S_ISDIR(st.st_mode) &&
+	    (!S_ISREG(st.st_mode) ||
+	     dirent.d_name[0] == 'I' ||
+	     dirent.d_name[0] == 'J' ||
+	     dirent.d_name[0] == '@' ||
+	     dirent.d_name[0] == '+'))
+		goto found_unexpected_object;
 
 	/* create a representation for this object */
 	child = create_object(curr, dirent.d_name, &st);
@@ -1236,7 +1245,7 @@ next:
 		}
 
 		/* add objects that aren't in use to the cull table */
-		if (!is_object_in_use(dirfd(curr->dir), dirent.d_name)) {
+		if (!is_object_in_use(dirent.d_name)) {
 			debug(2, "- insert");
 			child->new = 0;
 			insert_into_cull_table(child);
@@ -1278,10 +1287,12 @@ dir_read_complete:
 	if (curr->usage == 1 && curr->empty) {
 		/* attempt to cull unpinned empty intermediate and index
 		 * objects */
+		if (fchdir(dirfd(curr->parent->dir)) < 0)
+			oserror("Failed to change current directory");
+
 		switch (curr->type) {
 		case OBJTYPE_INDEX:
-			cull_file(dirfd(curr->parent->dir),
-				  curr->name);
+			cull_file(curr->name);
 			break;
 
 		case OBJTYPE_INTERMEDIATE:
@@ -1442,8 +1453,10 @@ static void cull_object(struct object *object)
 			goto object_already_gone;
 		}
 
+		if (fchdir(dirfd) < 0)
+			oserror("Failed to change current directory");
 		if (object->atime >= st.st_atime)
-			cull_file(dirfd, object->name);
+			cull_file(object->name);
 
 		close(dirfd);
 	}

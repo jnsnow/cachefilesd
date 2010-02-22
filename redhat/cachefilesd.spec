@@ -2,8 +2,8 @@
 %define selinux_policyver %(sed -e 's,.*selinux-policy-\\([^/]*\\)/.*,\\1,' /usr/share/selinux/devel/policyhelp)
 
 Name:           cachefilesd
-Version:        0.8
-Release:        16%{?dist}
+Version:        0.9
+Release:        1%{?dist}
 Summary:        CacheFiles userspace management daemon
 Group:          System Environment/Daemons
 License:        GPL
@@ -148,6 +148,13 @@ fi
 %{_datadir}/selinux/*/cachefilesd.pp
 
 %changelog
+* Thu Aug 9 2007 David Howells <dhowells@redhat.com> 0.9-1
+- The cachefiles module no longer accepts directory fds on cull and inuse
+  commands, but rather uses current working directory.
+
+* Mon Jul 2 2007 David Howells <dhowells@redhat.com> 0.8-16
+- Use stat64/fstatat64 to avoid EOVERFLOW errors from the kernel on large files.
+
 * Tue Nov 15 2006 David Howells <dhowells@redhat.com> 0.8-15
 - Made cachefilesd ask the kernel whether cullable objects are in use and omit
   them from the cull table if they are.
