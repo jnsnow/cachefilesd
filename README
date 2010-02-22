@@ -14,6 +14,12 @@ Contents:
 
  (*) Things to avoid.
 
+ (*) Cache culling.
+
+ (*) Cache structure.
+
+ (*) Security model and SELinux.
+
 
 ========
 OVERVIEW
@@ -95,6 +101,18 @@ set up cache ready for use.  The following script commands are available:
 
 	Specify a tag to FS-Cache to use in distinguishing multiple caches.
 	Optional.  The default is "CacheFiles".
+
+ (*) culltable <log2size>
+
+	Specify the size of the tables holding the lists of cullable objects in
+	the cache.  The bigger the number, the faster and more smoothly that
+	culling can proceed when there are many objects in the cache, but the
+	more memory will be consumed by cachefilesd.
+
+	The quantity is specified as log2 of the size actually required, for
+	example 12 indicates a table of 4096 entries and 13 indicates 8192
+	entries.  The permissible values are between 12 and 20, the latter
+	indicating 1048576 entries.  The default is 12.
 
  (*) debug <mask>
 
@@ -284,3 +302,81 @@ or retire them.
 
 Note that CacheFiles will erase from the cache any file it doesn't recognise or
 any file of an incorrect type (such as a FIFO file or a device file).
+
+
+==========================
+SECURITY MODEL AND SELINUX
+==========================
+
+CacheFiles is implemented to deal properly with the LSM security features of
+the Linux kernel and the SELinux facility.
+
+One of the problems that CacheFiles faces is that it is generally acting on
+behalf of a process that is in a security context that is not appropriate for
+accessing the cache - either because the files in the cache are inaccessible to
+that process, or because if the process creates a file in the cache, it'll be
+inaccessible to other processes.
+
+The way CacheFiles works is to temporarily change the security context (fsuid,
+fsgid and actor security label) that the process acts as - without changing the
+security context of the process when it the target of an operation performed by
+some other process (so signalling and suchlike still work correctly).
+
+
+When the CacheFiles module is asked to bind to its cache, it:
+
+ (1) Finds the security label attached to the root cache directory and uses
+     that as the security label with which it will create files.  By default,
+     this is:
+
+	cachefiles_var_t
+
+ (2) Finds the security label of the process which issued the bind request
+     (presumed to be the cachefilesd daemon), which by default will be:
+
+	cachefilesd_t
+
+     and asks LSM to supply a security ID as which it should act given the
+     daemon's label.  By default, this will be:
+
+	cachefiles_kernel_t
+
+     SELinux transitions the daemon's security ID to the module's security ID
+     based on a rule of this form in the policy.
+
+	type_transition <daemon's-ID> kernel_t : process <module's-ID>;
+
+     For instance:
+
+	type_transition cachefilesd_t kernel_t : process cachefiles_kernel_t;
+
+
+The module's security ID gives it permission to create, move and remove files
+and directories in the cache, to find and access directories and files in the
+cache, to set and access extended attributes on cache objects, and to read and
+write files in the cache.
+
+The daemon's security ID gives it only a very restricted set of permissions: it
+may scan directories, stat files and erase files and directories.  It may
+not read or write files in the cache, and so it is precluded from accessing the
+data cached therein; nor is it permitted to create new files in the cache.
+
+
+The policy source files are installed for reference as:
+
+	/usr/share/doc/cachefilesd-selinux-*/cachefilesd.te
+	/usr/share/doc/cachefilesd-selinux-*/cachefilesd.fc
+	/usr/share/doc/cachefilesd-selinux-*/cachefilesd.if
+
+By default, the cache is located in /var/fscache, but if it is desirable that
+it should be elsewhere, than either the above policy files must be altered, or
+an auxiliary policy must be installed to label the alternate location of the
+cache.
+
+For instructions on how to add an auxiliary policy to enable the cache to be
+located elsewhere when SELinux is in enforcing mode, please see:
+
+	/usr/share/doc/cachefilesd-*/move-cache.txt
+
+When the cachefilesd rpm is installed; alternatively, the document can be found
+in the sources.

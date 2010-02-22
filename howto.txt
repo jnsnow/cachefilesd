@@ -14,6 +14,8 @@ CONTENTS
 
  (*) Monitoring.
 
+ (*) Relocating the cache.
+
  (*) Further information.
 
 
@@ -250,6 +252,21 @@ other /proc files.  For instance:
 
 The "FSC" column says "yes" when the system has been asked to cache a
 particular NFS share/volume/export, and "no" when it hasn't.
+
+
+====================
+RELOCATING THE CACHE
+====================
+
+By default, the cache is located in /var/fscache, but this may be undesirable.
+Unless SELinux is being used in enforcing mode, relocating the cache is
+trivially a matter of changing the "dir" line in /etc/cachefilesd.
+
+However, if SELinux is being used in enforcing mode, then it's not that
+simple.  The security policy that governs access to the cache must be changed.
+For more information, see:
+
+	move-cache.txt
 
 
 ===================

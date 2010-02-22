@@ -42,6 +42,7 @@
 #include <syslog.h>
 #include <dirent.h>
 #include <time.h>
+#include <poll.h>
 #include <sys/inotify.h>
 #include <sys/time.h>
 #include <sys/vfs.h>
@@ -87,9 +88,9 @@ static int jumpstart_scan = 0;
  * - we have two tables: one we're building and one that's full of ready to be
  *   culled objects
  */
-#define CULLTABLE_SIZE 4096
-static struct object *cullbuild[CULLTABLE_SIZE];
-static struct object *cullready[CULLTABLE_SIZE];
+static unsigned culltable_size = 4096;
+static struct object **cullbuild;
+static struct object **cullready;
 
 static int oldest_build = -1;
 static int oldest_ready = -1;
@@ -97,11 +98,13 @@ static int ncullable = 0;
 
 
 static const char *configfile = "/etc/cachefilesd.conf";
+static const char *devfile = "/dev/cachefiles";
 static const char *procfile = "/proc/fs/cachefiles";
+static const char *pidfile = "/var/run/cachefilesd.pid";
 static char *cacheroot, *graveyardpath;
 
 static int xdebug, xnolog, xopenedlog;
-static int stop, reap, cull, statecheck;
+static int stop, reap, cull; //, statecheck;
 static int graveyardfd;
 static unsigned long long brun, bcull, bstop, frun, fcull, fstop;
 
@@ -112,12 +115,13 @@ static void help(void)
 {
 	fprintf(stderr,
 		"Format:\n"
-		"  /sbin/cachefilesd [-d]* [-s] [-n] [-f <configfile>]\n"
+		"  /sbin/cachefilesd [-d]* [-s] [-n] [-p <pidfile>] [-f <configfile>]\n"
 		"\n"
 		"Options:\n"
 		"  -d\tIncrease debugging level (cumulative)\n"
 		"  -n\tDon't daemonise the process\n"
 		"  -s\tMessage output to stderr instead of syslog\n"
+		"  -p <pidfile>\tWrite the PID into the file\n"
 		"  -f <configfile>\n"
 		"\tRead the specified configuration file instead of"
 		" /etc/cachefiles.conf\n");
@@ -191,12 +195,13 @@ static void cachefilesd(void) __attribute__((noreturn));
 static void reap_graveyard(void);
 static void reap_graveyard_aux(const char *dirname);
 static void read_cache_state(void);
+static int is_object_in_use(int dirfd, const char *filename);
 static void cull_file(int dirfd, const char *filename);
 static void build_cull_table(void);
 static void decant_cull_table(void);
 static void insert_into_cull_table(struct object *object);
 static void put_object(struct object *object);
-static struct object *create_object(struct object *parent, const char *name, struct stat *st);
+static struct object *create_object(struct object *parent, const char *name, struct stat64 *st);
 static void destroy_unexpected_object(struct object *parent, struct dirent *de);
 static int get_dir_fd(struct object *dir);
 static void cull_object(struct object *object);
@@ -224,16 +229,6 @@ static void sigio(int sig)
 
 /*****************************************************************************/
 /*
- * the CacheFiles module signalled a significant change of state
- */
-static void sigurg(int sig)
-{
-	statecheck = 1;
-
-} /* end sigurg() */
-
-/*****************************************************************************/
-/*
  * redo scan after a time since the last scan turned up no results
  */
 static void sigalrm(int sig)
@@ -241,6 +236,24 @@ static void sigalrm(int sig)
 	jumpstart_scan = 1;
 
 } /* end sigalrm() */
+
+/*****************************************************************************/
+/*
+ * write the PID file
+ */
+static void write_pidfile(void)
+{
+	FILE *pf;
+
+	pf = fopen(pidfile, "w");
+	if (!pf)
+		oserror("Unable to open PID file: %s", pidfile);
+
+	if (fprintf(pf, "%d\n", getpid()) < 0 ||
+	    fclose(pf) == EOF)
+		oserror("Unable to write PID file: %s", pidfile);
+
+} /* end write_pidfile() */
 
 /*****************************************************************************/
 /*
@@ -262,7 +275,7 @@ int main(int argc, char *argv[])
 		help();
 
 	/* parse the arguments */
-	while (opt = getopt(argc, argv, "dsnf:"),
+	while (opt = getopt(argc, argv, "dsnf:p:"),
 	       opt != EOF
 	       ) {
 		switch (opt) {
@@ -284,6 +297,11 @@ int main(int argc, char *argv[])
 		case 'f':
 			/* use a specific config file */
 			configfile = optarg;
+			break;
+
+		case 'p':
+			/* use a specific PID file */
+			pidfile = optarg;
 			break;
 
 		default:
@@ -310,10 +328,20 @@ int main(int argc, char *argv[])
 	/* just in case... */
 	sync();
 
-	/* open the procfile on fd 3 */
-	_cachefd = open(procfile, O_RDWR);
-	if (_cachefd < 0)
-		oserror("Unable to open %s", procfile);
+	/* open the devfile or the procfile on fd 3 */
+	_cachefd = open(devfile, O_RDWR);
+	if (_cachefd < 0) {
+		if (errno != ENOENT)
+			oserror("Unable to open %s", devfile);
+
+		_cachefd = open(procfile, O_RDWR);
+		if (_cachefd < 0) {
+			if (errno == ENOENT)
+				oserror("Unable to open %s", devfile);
+			oserror("Unable to open %s", procfile);
+		}
+	}
+
 	if (_cachefd != cachefd) {
 		if (dup2(_cachefd, cachefd) < 0)
 			oserror("Unable to transfer cache fd to 3");
@@ -364,17 +392,33 @@ int main(int argc, char *argv[])
 		if (*cp == '#')
 			continue;
 
+		/* note the cull table size command */
+		if (memcmp(cp, "culltable", 9) == 0 && isspace(cp[9])) {
+			unsigned long cts;
+			char *sp;
+
+			for (sp = cp + 10; isspace(*sp); sp++) {;}
+
+			cts = strtoul(sp, &sp, 10);
+			if (*sp)
+				cfgerror("Invalid cull table size number");
+			if (cts < 12 || cts > 20)
+				cfgerror("Log2 of cull table size must be 12 <= N <= 20");
+			culltable_size = 1 << cts;
+			continue;
+		}
+
 		/* note the dir command */
 		if (memcmp(cp, "dir", 3) == 0 && isspace(cp[3])) {
 			char *sp;
 
 			for (sp = cp + 4; isspace(*sp); sp++) {;}
 
-			if (stat(sp, &st) < 0)
-				oserror("Can't confirm cache location");
-
 			if (strlen(sp) > PATH_MAX - 10)
 				cfgerror("Cache pathname is too long");
+
+			if (stat(sp, &st) < 0)
+				oserror("Can't confirm cache location");
 
 			cacheroot = strdup(sp);
 			if (!cacheroot)
@@ -402,6 +446,15 @@ int main(int argc, char *argv[])
 
 	if (fclose(config) == EOF)
 		oserror("Unable to close %s", configfile);
+
+	/* allocate the cull tables */
+	cullbuild = calloc(culltable_size, sizeof(cullbuild[0]));
+	if (!cullbuild)
+		oserror("calloc");
+
+	cullready = calloc(culltable_size, sizeof(cullready[0]));
+	if (!cullready)
+		oserror("calloc");
 
 	/* leave stdin, stdout, stderr and cachefd open only */
 	if (nullfd != 0)
@@ -441,6 +494,7 @@ int main(int argc, char *argv[])
 			signal(SIGTTOU, SIG_IGN);
 			signal(SIGTSTP, SIG_IGN);
 			setsid();
+			write_pidfile();
 			cachefilesd();
 
 		default:
@@ -499,14 +553,14 @@ static void cachefilesd(void)
 {
 	sigset_t sigs, osigs;
 
+	struct pollfd pollfds[1] = {
+		[0] = {
+			.fd	= cachefd,
+			.events	= POLLIN,
+		},
+	};
+
 	notice("Daemon Started");
-
-	/* the cache handle should generate SIGURG */
-	if (fcntl(cachefd, F_SETSIG, SIGURG) < 0)
-		oserror("Unable to set cache handle to generate SIGURG");
-
-	if (fcntl(cachefd, F_SETOWN, getpid()) < 0)
-		oserror("Unable to set cache handle to deliver SIGURG here");
 
 	/* open the cache directories */
 	open_cache();
@@ -516,13 +570,11 @@ static void cachefilesd(void)
 	 */
 	sigemptyset(&sigs);
 	sigaddset(&sigs, SIGIO);
-	sigaddset(&sigs, SIGURG);
 	sigaddset(&sigs, SIGINT);
 	sigaddset(&sigs, SIGTERM);
 
 	signal(SIGTERM, sigterm);
 	signal(SIGINT, sigterm);
-	signal(SIGURG, sigurg);
 
 	/* check the graveyard for graves */
 	reap_graveyard();
@@ -537,8 +589,8 @@ static void cachefilesd(void)
 				oserror("Unable to block signals");
 
 			if (!reap && !cull) {
-				sigsuspend(&osigs);
-				if (errno != EINTR)
+				if (ppoll(pollfds, 1, NULL, &osigs) < 0 &&
+				    errno != EINTR)
 					oserror("Unable to suspend process");
 			}
 
@@ -709,6 +761,26 @@ static void read_cache_state(void)
 
 /*****************************************************************************/
 /*
+ * find out if an object is in use
+ */
+static int is_object_in_use(int dirfd, const char *filename)
+{
+	char buffer[NAME_MAX + 30];
+	int ret, n;
+
+	n = sprintf(buffer, "inuse %d %s", dirfd, filename);
+
+	/* command the module */
+	ret = write(cachefd, buffer, n);
+	if (ret < 0 && errno != ESTALE && errno != ENOENT && errno != EBUSY)
+		oserror("Failed to check object's in-use state");
+
+	return ret < 0 && errno == EBUSY ? 1 : 0;
+
+} /* end is_object_in_use */
+
+/*****************************************************************************/
+/*
  * cull a file representing an object
  * - requests CacheFiles rename the object "<dirfd>/filename" to the graveyard
  */
@@ -733,7 +805,7 @@ static void cull_file(int dirfd, const char *filename)
  */
 static struct object *create_object(struct object *parent,
 				    const char *name,
-				    struct stat *st)
+				    struct stat64 *st)
 {
 	struct object *object, *p, *pr;
 	int len;
@@ -904,7 +976,7 @@ static void insert_into_cull_table(struct object *object)
 	}
 
 	/* insert somewhere if table is not full */
-	if (oldest_build < CULLTABLE_SIZE - 1) {
+	if (oldest_build < culltable_size - 1) {
 		object->usage++;
 		oldest_build++;
 
@@ -957,7 +1029,7 @@ static void insert_into_cull_table(struct object *object)
 	}
 
 	/* if table is full then insert only if older than newest */
-	if (oldest_build > CULLTABLE_SIZE - 1)
+	if (oldest_build > culltable_size - 1)
 		error("Cull table overfull");
 
 	if (object->atime >= cullbuild[0]->atime)
@@ -975,12 +1047,12 @@ static void insert_into_cull_table(struct object *object)
 	}
 
 	/* shift everything up one if older than oldest */
-	if (object->atime <= cullbuild[CULLTABLE_SIZE - 1]->atime) {
+	if (object->atime <= cullbuild[culltable_size - 1]->atime) {
 		memmove(&cullbuild[0],
 			&cullbuild[1],
-			(CULLTABLE_SIZE - 1) * sizeof(cullbuild[0]));
+			(culltable_size - 1) * sizeof(cullbuild[0]));
 
-		cullbuild[CULLTABLE_SIZE - 1] = object;
+		cullbuild[culltable_size - 1] = object;
 		return;
 	}
 
@@ -991,7 +1063,7 @@ static void insert_into_cull_table(struct object *object)
 	cullbuild[0] = cullbuild[1];
 
 	y = 2;
-	o = CULLTABLE_SIZE - 1;
+	o = culltable_size - 1;
 
 	do {
 		m = (y + o) / 2;
@@ -1024,7 +1096,7 @@ static void build_cull_table(void)
 {
 	struct dirent dirent, *de;
 	struct object *curr, *child;
-	struct stat st;
+	struct stat64 st;
 	int loop, fd;
 
 	curr = scan;
@@ -1083,7 +1155,7 @@ next:
 		goto found_unexpected_object;
 
 	/* see if this object is already known to us */
-	if (fstatat(dirfd(curr->dir), dirent.d_name, &st, 0) < 0) {
+	if (fstatat64(dirfd(curr->dir), dirent.d_name, &st, 0) < 0) {
 		if (errno == ENOENT)
 			goto next;
 		oserror("Failed to stat directory");
@@ -1163,9 +1235,12 @@ next:
 			;
 		}
 
-		debug(2, "- insert");
-		child->new = 0;
-		insert_into_cull_table(child);
+		/* add objects that aren't in use to the cull table */
+		if (!is_object_in_use(dirfd(curr->dir), dirent.d_name)) {
+			debug(2, "- insert");
+			child->new = 0;
+			insert_into_cull_table(child);
+		}
 		put_object(child);
 		goto next;
 
@@ -1279,7 +1354,7 @@ static void decant_cull_table(void)
 	}
 
 	/* decant some of the build table if there's space */
-	space = CULLTABLE_SIZE - (oldest_ready + 1);
+	space = culltable_size - (oldest_ready + 1);
 	if (space <= 0) {
 		if (space < 0)
 			error("Less than zero space in ready table");
@@ -1305,7 +1380,7 @@ static void decant_cull_table(void)
 	memset(&cullbuild[leave], 0x6b, copy * sizeof(cullbuild[0]));
 	oldest_build = leave - 1;
 
-	if (copy + leave > CULLTABLE_SIZE)
+	if (copy + leave > culltable_size)
 		error("Scan table exceeded (%d+%d)", copy, leave);
 
 check:
@@ -1352,14 +1427,14 @@ static int get_dir_fd(struct object *dir)
  */
 static void cull_object(struct object *object)
 {
-	struct stat st;
+	struct stat64 st;
 	int dirfd;
 
 	debug(1, "CULL %s", object->name);
 
 	dirfd = get_dir_fd(object->parent);
 	if (dirfd >= 0) {
-		if (fstatat(dirfd, object->name, &st, 0) < 0) {
+		if (fstatat64(dirfd, object->name, &st, 0) < 0) {
 			if (errno != ENOENT)
 				oserror("Failed to re-stat object");
 
@@ -1394,7 +1469,7 @@ static void cull_objects(void)
 	}
 
 	/* must start refilling the cull table */
-	if (!scan && oldest_build <= CULLTABLE_SIZE / 2 + 2) {
+	if (!scan && oldest_build <= culltable_size / 2 + 2) {
 		decant_cull_table();
 
 		notice("Refilling cull table");

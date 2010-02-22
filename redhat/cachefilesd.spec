@@ -1,24 +1,46 @@
+%define selinux_variants mls strict targeted
+%define selinux_policyver %(sed -e 's,.*selinux-policy-\\([^/]*\\)/.*,\\1,' /usr/share/selinux/devel/policyhelp)
+
 Name:           cachefilesd
-Version:        0.7
-Release:        1%{?dist}
+Version:        0.8
+Release:        16%{?dist}
 Summary:        CacheFiles userspace management daemon
 Group:          System Environment/Daemons
 License:        GPL
-URL:  			http://people.redhat.com/~dhowells/fscache/
-Source0:        http://people.redhat.com/dhowells/fscache/cachefilesd-0.6.tar.bz2
+URL:  		http://people.redhat.com/~dhowells/fscache/
+Source0:        http://people.redhat.com/dhowells/fscache/cachefilesd-%{version}.tar.bz2
+Source1:        cachefilesd.if
+Source2:        cachefilesd.te
+Source3:        cachefilesd.fc
 
 BuildRoot:      %{_tmppath}/%{name}-%{version}-root-%(%{__id_u} -n)
 BuildRequires: automake, autoconf
 Requires(post): /sbin/chkconfig, /sbin/service
 Requires(preun): /sbin/chkconfig, /sbin/service
+Requires:       %{name}-selinux = %{version}-%{release}
 
 %description
 The cachefilesd daemon manages the caching files and directory that are
 that are used by network filesystems such a AFS and NFS to
 do persistent caching to the local disk.
 
+%package selinux
+Summary:        SELinux policy module supporting cachefilesd
+Group:          System Environment/Base
+BuildRequires:  checkpolicy, selinux-policy-devel, hardlink
+%if "%{selinux_policyver}" != ""
+Requires:       selinux-policy >= %{selinux_policyver}
+%endif
+Requires(post):   /usr/sbin/semodule, /sbin/restorecon
+Requires(postun): /usr/sbin/semodule, /sbin/restorecon
+
+%description selinux
+SELinux policy module supporting cachefilesd
+
 %prep
 %setup -q
+mkdir SELinux
+cp -p %{SOURCE1} %{SOURCE2} %{SOURCE3} SELinux
 
 %build
 %ifarch s390 s390x
@@ -31,22 +53,58 @@ CFLAGS="`echo $RPM_OPT_FLAGS $ARCH_OPT_FLAGS $PIE`"
 
 make all
 
+# Build SELinux policy modules
+cd SELinux
+for selinuxvariant in %{selinux_variants}
+do
+    make NAME=${selinuxvariant} -f /usr/share/selinux/devel/Makefile
+    mv cachefilesd.pp cachefilesd.pp.${selinuxvariant}
+    make NAME=${selinuxvariant} -f /usr/share/selinux/devel/Makefile clean
+done
+cd -
 
 %install
 rm -rf %{buildroot}
 mkdir -p %{buildroot}/sbin
 mkdir -p %{buildroot}%{_sysconfdir}/rc.d/init.d
 mkdir -p %{buildroot}%{_mandir}/{man5,man8}
+mkdir -p %{buildroot}/usr/share/doc/%{name}-%{version}
+mkdir -p %{buildroot}%{_localstatedir}/fscache
 make DESTDIR=%{buildroot} install
 
 install -m 644 cachefilesd.conf %{buildroot}%{_sysconfdir}
 install -m 755 cachefilesd.initd %{buildroot}%{_sysconfdir}/rc.d/init.d/cachefilesd
+
+# Install SELinux policy modules
+cd SELinux
+for selinuxvariant in %{selinux_variants}
+do
+    install -d %{buildroot}%{_datadir}/selinux/${selinuxvariant}
+    install -p -m 644 cachefilesd.pp.${selinuxvariant} \
+           %{buildroot}%{_datadir}/selinux/${selinuxvariant}/cachefilesd.pp
+done
+cd -
+
+# Hardlink identical policy module packages together
+/usr/sbin/hardlink -cv %{buildroot}%{_datadir}/selinux
 
 %clean
 rm -rf $RPM_BUILD_ROOT
 
 %post
 /sbin/chkconfig --add %{name}
+
+if [ "$1" -ge 1 ]; then
+	/sbin/service cachefilesd condrestart > /dev/null
+fi
+
+%post selinux
+# Install SELinux policy modules
+for selinuxvariant in %{selinux_variants}
+do
+  /usr/sbin/semodule -s ${selinuxvariant} -i \
+    %{_datadir}/selinux/${selinuxvariant}/cachefilesd.pp &> /dev/null || :
+done
 
 %preun
 if [ $1 -eq 0 ]; then
@@ -55,23 +113,69 @@ if [ $1 -eq 0 ]; then
 fi
 
 %postun
-if [ "$1" -ge 1 ]; then
-	/sbin/service cachefilesd condrestart > /dev/null
+if [ $1 -eq 0 ]; then
+	# Fix up non-standard directory context
+	/sbin/restorecon -R %{_localstatedir}/fscache || :
 fi
 
+%postun selinux
+# Clean up after package removal
+if [ $1 -eq 0 ]; then
+  # Remove SELinux policy modules
+  for selinuxvariant in %{selinux_variants}
+  do
+    /usr/sbin/semodule -s ${selinuxvariant} -r cachefilesd &> /dev/null || :
+  done
+  # Clean up any remaining file contexts (shouldn't be any really)
+  [ -d %{_localstatedir}/fscache ] && \
+    /sbin/restorecon -R %{_localstatedir}/fscache &> /dev/null || :
+fi
 
 %files
 %defattr(-,root,root)
 %doc README
+%doc howto.txt
+%doc move-cache.txt
 %config(noreplace) %{_sysconfdir}/cachefilesd.conf
 %attr(0755,root,root) %{_sysconfdir}/rc.d/init.d/cachefilesd
 /sbin/*
 %{_mandir}/*/*
+%{_localstatedir}/fscache
+
+%files selinux
+%defattr(-,root,root,0755)
+%doc SELinux/*
+%{_datadir}/selinux/*/cachefilesd.pp
 
 %changelog
-* Wed Aug 30 2006 David Howells <dhowells@redhat.com> 0.6-1
-- Mark __error() as attribute format printf
-- Fix up format errors shown up
+* Tue Nov 15 2006 David Howells <dhowells@redhat.com> 0.8-15
+- Made cachefilesd ask the kernel whether cullable objects are in use and omit
+  them from the cull table if they are.
+- Made the size of cachefilesd's culling tables configurable.
+- Updated the manual pages.
+
+* Mon Nov 14 2006 David Howells <dhowells@redhat.com> 0.8-14
+- Documented SELinux interaction.
+
+* Fri Nov 10 2006 David Howells <dhowells@redhat.com> 0.8-11
+- Include SELinux policy for cachefilesd.
+
+* Thu Oct 19 2006 Steve Dickson <steved@redhat.com> 0.7-3
+- Fixed typo that was causing the howto.txt not to be installed.
+
+* Tue Oct 17 2006 David Howells <dhowells@redhat.com> 0.8-1
+- Use /dev/cachefiles if it present in preference to /proc/fs/cachefiles.
+- Use poll rather than SIGURG on /dev/cachefilesd.
+
+* Sun Oct 01 2006 Jesse Keating <jkeating@redhat.com> - 0.7-2
+- rebuilt for unwind info generation, broken in gcc-4.1.1-21
+
+* Fri Sep 22 2006 Steve Dickson <steved@redhat.com> 0.7-1
+- updated to 0.7 which adds the howto.txt
+
+* Wed Aug 30 2006 Steve Dickson <steved@redhat.com> 0.6-1
+- Fixed memory corruption problem
+- Added the fcull/fstop/frun options
 
 * Fri Aug 11 2006 Steve Dickson <steved@redhat.com> 0.5-1
 - Upgraded to 0.5 which fixed initial scan problem when

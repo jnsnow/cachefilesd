@@ -1,0 +1,119 @@
+###############################################################################
+#
+# Copyright (C) 2006 Red Hat, Inc. All Rights Reserved.
+# Written by David Howells (dhowells@redhat.com)
+#            Karl MacMillan (kmacmill@redhat.com)
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version
+# 2 of the License, or (at your option) any later version.
+#
+###############################################################################
+
+#
+# This security policy governs access by the CacheFiles kernel module and
+# userspace management daemon to the files and directories in the on-disk
+# cache, on behalf of the processes accessing the cache through a network
+# filesystem such as NFS
+#
+policy_module(cachefilesd,1.0.16)
+
+###############################################################################
+#
+# Declarations
+#
+###############################################################################
+require { type kernel_t; }
+
+#
+# Files in the cache are created by the cachefiles module with security ID
+# cachefiles_var_t
+#
+type cachefiles_var_t;
+files_type(cachefiles_var_t)
+
+#
+# The /dev/cachefiles character device has security ID cachefiles_dev_t
+#
+type cachefiles_dev_t;
+dev_node(cachefiles_dev_t)
+
+#
+# The cachefilesd daemon normally runs with security ID cachefilesd_t
+#
+type cachefilesd_t;
+type cachefilesd_exec_t;
+domain_type(cachefilesd_t)
+init_daemon_domain(cachefilesd_t, cachefilesd_exec_t)
+
+#
+# The cachefilesd daemon pid file context
+#
+type cachefilesd_var_run_t;
+files_pid_file(cachefilesd_var_run_t)
+
+#
+# The CacheFiles module causes processes accessing the cache files to do so
+# acting as security ID cachefiles_kernel_t
+#
+type cachefiles_kernel_t;
+domain_type(cachefiles_kernel_t)
+domain_obj_id_change_exemption(cachefiles_kernel_t)
+type_transition cachefilesd_t kernel_t : process cachefiles_kernel_t;
+
+###############################################################################
+#
+# Permit RPM to deal with files in the cache
+#
+###############################################################################
+rpm_use_script_fds(cachefilesd_t)
+
+###############################################################################
+#
+# cachefilesd local policy
+#
+# Check in /etc/selinux/refpolicy/include for macros to use instead of allow
+# rules.
+#
+###############################################################################
+allow cachefilesd_t self : capability { setuid setgid sys_admin dac_override };
+
+# Basic access
+files_read_etc_files(cachefilesd_t)
+libs_use_ld_so(cachefilesd_t)
+libs_use_shared_libs(cachefilesd_t)
+miscfiles_read_localization(cachefilesd_t)
+logging_send_syslog_msg(cachefilesd_t)
+init_dontaudit_use_script_ptys(cachefilesd_t)
+term_dontaudit_use_generic_ptys(cachefilesd_t)
+term_dontaudit_getattr_unallocated_ttys(cachefilesd_t)
+
+# Allow manipulation of pid file
+allow cachefilesd_t cachefilesd_var_run_t:file create_file_perms;
+files_pid_filetrans(cachefilesd_t,cachefilesd_var_run_t,file)
+
+# Allow read access to cache
+allow cachefilesd_t cachefiles_var_t : dir create_dir_perms;
+allow cachefilesd_t cachefiles_var_t : file { getattr rename unlink };
+
+# Access to cachefiles device
+allow cachefilesd_t cachefiles_dev_t : chr_file rw_file_perms;
+
+# Permit the filesystem to be statfs'd
+fs_getattr_xattr_fs(cachefilesd_t)
+
+###############################################################################
+#
+# cachefiles kernel module local policy
+#
+###############################################################################
+allow cachefiles_kernel_t self:capability { dac_override dac_read_search };
+allow cachefiles_kernel_t initrc_t:process sigchld;
+
+allow cachefiles_kernel_t cachefiles_var_t : dir manage_dir_perms;
+allow cachefiles_kernel_t cachefiles_var_t : file create_file_perms;
+
+fs_getattr_xattr_fs(cachefiles_kernel_t)
+
+dev_search_sysfs(cachefiles_kernel_t)

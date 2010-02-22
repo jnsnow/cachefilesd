@@ -7,7 +7,7 @@
 .\" as published by the Free Software Foundation; either version
 .\" 2 of the License, or (at your option) any later version.
 .\"
-.TH CACHEFILESD.CONF 5 "11 July 2005" Linux "Cache Files Utilities"
+.TH CACHEFILESD.CONF 5 "14 November 2005" Linux "Cache Files Utilities"
 .SH NAME
 /etc/cachefilesd.conf \- Local file caching configuration file
 .SH SYNOPSIS
@@ -24,7 +24,8 @@ considered to be comments and are discarded.
 The only mandatory command is:
 .TP
 .B dir <path>
-This command specifies the directory containing the root of the cache.
+This command specifies the directory containing the root of the cache.  It may
+only specified once per configuration file.
 .P
 All the other commands are optional:
 .TP
@@ -51,6 +52,17 @@ This command specifies a tag to FS-Cache to use in distinguishing multiple
 caches.  This is only required if more than one cache is going to be used.  The
 default is "CacheFiles".
 .TP
+.B culltable <log2size>
+This command specifies the size of the tables holding the lists of cullable
+objects in the cache.  The bigger the number, the faster and more smoothly that
+culling can proceed when there are many objects in the cache, but the more
+memory will be consumed by cachefilesd.
+.IP
+The quantity is specified as log2 of the size actually required, for example 12
+indicates a table of 4096 entries and 13 indicates 8192 entries.  The
+permissible values are between 12 and 20, the latter indicating 1048576
+entries.  The default is 12.
+.TP
 .B debug <mask>
 This command specifies a numeric bitmask to control debugging in the kernel
 module.  The default is zero (all off).  The following values can be OR'd into
@@ -67,7 +79,7 @@ Turn on trace of function exit (_leave() macros)
 Turn on trace of internal debug points (_debug())
 .RE
 .IP
-This mask can also be set through /proc/sys/fs/cachefiles/debug.
+This mask can also be set through /sys/module/cachefiles/parameters/debug.
 .RE
 .SH EXAMPLES
 .P
@@ -135,7 +147,7 @@ These are then culled in least recently used order.  A new scan of the cache is
 started as soon as space is made in the table.  Objects will be skipped if
 their atimes have changed or if the kernel module says it is still using them.
 .SH SEE ALSO
-\fBcachefilesd\fR(8), \fBdf\fR(1), /usr/share/docs/cachefilesd-*/README
+\fBcachefilesd\fR(8), \fBdf\fR(1), /usr/share/doc/cachefilesd-*/README
 .SH AUTHORS
 The cachefilesd software has been developed by David Howells
 .Aq dhowells@redhat.com .

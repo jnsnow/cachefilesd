@@ -1,0 +1,85 @@
+	     =====================================================
+	     RELOCATING THE CACHE WITH SELINUX ENFORCEMENT ENABLED
+	     =====================================================
+
+If the cache is being used on a system on which SELinux is active and running
+in enforcing mode, then the security policy installed by the cachefilesd RPM
+needs to be updated to permit the CacheFiles module and daemon to access the
+cache.
+
+The simplest way to do this is to add an auxiliary policy to mark out the
+location of the new cache, whilst leaving the old location still available for
+caching.  If anything more is required, then it will be necessary to modify the
+policy that is installed.
+
+The sources for the installed policy will be themselves installed by the
+cachefilesd-selinux RPM in:
+
+	/usr/share/doc/cachefilesd-selinux-*/
+
+See the files named:
+
+	cachefilesd.te
+	cachefilesd.fc
+	cachefilesd.if
+
+
+==========================
+ADDING AN AUXILIARY POLICY
+==========================
+
+Creating and adding an auxiliary policy is very easy.  Follow the following
+steps:
+
+ (0) Check that checkpolicy and selinux-policy-devel packages are installed.
+     These are needed to build your policy.
+
+ (1) Create a new directory and go into it.
+
+ (2) Create a source file to reference the security ID already set up for files
+     in the cache as you'll need these to label your own cache directory.
+     Assuming you're going to name your policy "mycache", this would have to be
+     called "mycache.te":
+
+	[mycache.te]
+	policy_module(mycache,1.0.0)
+	require { type cachefiles_var_t; }
+
+ (3) Create a source file to note the directory in which you wish your cache to
+     reside.  This file should be named for your policy, plus a ".fc" suffix:
+
+	[mycache.fc]
+	/mycache(/.*)? gen_context(system_u:object_r:cachefiles_var_t,s0)
+
+     This specifies the security ID for the directory in which your cache will
+     live and all its descendents.  Replace "/mycache" with the path to your
+     cache's directory.
+
+ (4) Build the policy:
+
+	make -f /usr/share/selinux/devel/Makefile
+
+ (5) And install it:
+
+	semodule -i mycache.pp
+
+ (6) Create your directory and tell SELinux to label it appropriately:
+
+	mkdir /mycache
+	restorecon /mycache
+
+ (7) Check that the directory is labelled appropriately:
+
+	ls -dZ /mycache
+
+ (8) Modify /etc/cachefilesd.conf to point to the correct directory and then
+     start the cachefilesd service.
+
+The auxiliary policy can be later removed by:
+
+	semodule -r mycache.pp
+
+If the policy is updated, then the version number in policy_module() in
+mycache.te should be increased and the module upgraded:
+
+	semodule -u mycache.pp

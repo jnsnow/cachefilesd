@@ -7,7 +7,7 @@
 .\" as published by the Free Software Foundation; either version
 .\" 2 of the License, or (at your option) any later version.
 .\"
-.TH cachefilesd 8 "11 July 2006"
+.TH cachefilesd 8 "14 November 2006"
 .SH NAME
 cachefilesd \- CacheFiles userspace management daemon
 .SH SYNOPSIS
@@ -18,23 +18,27 @@ network filesystems such a AFS and NFS to cache data locally on disk.
 .P
 The README file should be read before attempting to configure this facility:
 .IP
-/usr/share/docs/cachefilesd-*/README
+/usr/share/doc/cachefilesd-*/README
 .SH OPTIONS
 .TP
 .B -d
 Turn on debugging mode (message written to stderr).
+.TP
 .B -s
 Don't use syslog.
 .TP
 .B -n
 Don't daemonise.
 .TP
+.BI "-p <pidfile>"
+Use an alternate PID file to /var/run/cachefilesd.pid.
+.TP
 .BI "-f <configfile>"
 Read the alternate configuration files.
 .SH FILES
 .BR /etc/cachefilesd.conf
 .SH SEE ALSO
-\fBcachefilesd.conf\fR(5), /usr/share/docs/cachefilesd-*/README
+\fBcachefilesd.conf\fR(5), /usr/share/doc/cachefilesd-*/README
 .SH AUTHORS
 .br
 David Howells <dhowells@redhat.com>
