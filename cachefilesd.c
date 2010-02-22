@@ -78,6 +78,7 @@ static int nopendir = 0;
 
 /* current scan point */
 static struct object *scan = &root;
+static int jumpstart_scan = 0;
 
 /* ranked order of cullable objects
  * - we have two tables: one we're building and one that's full of ready to be
@@ -226,6 +227,16 @@ static void sigurg(int sig)
 	statecheck = 1;
 
 } /* end sigurg() */
+
+/*****************************************************************************/
+/*
+ * redo scan after a time since the last scan turned up no results
+ */
+static void sigalrm(int sig)
+{
+	jumpstart_scan = 1;
+
+} /* end sigalrm() */
 
 /*****************************************************************************/
 /*
@@ -533,8 +544,21 @@ static void cachefilesd(void)
 			read_cache_state();
 		}
 
-		if (cull && oldest_ready >= 0)
-			cull_objects();
+		if (jumpstart_scan) {
+			jumpstart_scan = 0;
+			if (!stop && !scan) {
+				notice("Refilling cull table");
+				root.usage++;
+				scan = &root;
+			}
+		}
+
+		if (cull) {
+			if (oldest_ready >= 0)
+				cull_objects();
+			else if (oldest_build < 0)
+				jumpstart_scan = 1;
+		}
 
 		if (scan)
 			build_cull_table();
@@ -1215,8 +1239,12 @@ static void decant_cull_table(void)
 	if (scan)
 		error("Can't decant cull table whilst scanning");
 
-	if (oldest_build < 0)
+	/* if nothing there, scan again in a short while */
+	if (oldest_build < 0) {
+		signal(SIGALRM, sigalrm);
+		alarm(30);
 		return;
+	}
 
 	/* mark the new entries cullable */
 	for (loop = 0; loop <= oldest_build; loop++) {

@@ -26,7 +26,7 @@ MODPROBE=/sbin/modprobe
 MODPROBE_ARGS=""
 PROG="cachefilesd"
 
-[ ! -x /usr/sbin/$PROG ] && exit 0
+[ ! -x /sbin/$PROG ] && exit 0
 
 # Check for and source configuration file otherwise set defaults
 [ -f /etc/sysconfig/$PROG ] && . /etc/sysconfig/$PROG

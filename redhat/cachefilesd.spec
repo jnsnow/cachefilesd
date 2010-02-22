@@ -1,23 +1,24 @@
-Name: cachefilesd
-Version: 0.4
-Release: 1%{?dist}
-Summary: CacheFiles userspace management daemon
-Group: System Environment/Daemons
-License: GPL
-BuildRoot: %{_tmppath}/%{name}-%{version}-root-%(%{__id_u} -n)
-Url: http://people.redhat.com/~dhowells/fscache/
-Source0: http://people.redhat.com/~dhowells/fscache/cachefilesd-0.4.tar.bz2
-Requires(post): /usr/bin/chkconfig
-Requires(post): /usr/bin/chkconfig
+Name:           cachefilesd
+Version:        0.5
+Release:        1%{?dist}
+Summary:        CacheFiles userspace management daemon
+Group:          System Environment/Daemons
+License:        GPL
+URL:		http://people.redhat.com/~dhowells/fscache/
+Source0:        http://people.redhat.com/dhowells/fscache/cachefilesd-0.5.tar.bz2
+
+BuildRoot:      %{_tmppath}/%{name}-%{version}-root-%(%{__id_u} -n)
+BuildRequires: automake, autoconf
+Requires(post): /sbin/chkconfig, /sbin/service
+Requires(preun): /sbin/chkconfig, /sbin/service
 
 %description
-The cachefilesd daemon manages the caching files and directory that are that
-are used by network filesystems such a AFS and NFS to do persistent caching to
-the local disk.
+The cachefilesd daemon manages the caching files and directory that are
+that are used by network filesystems such a AFS and NFS to  
+do persistent caching to the local disk.
 
 %prep
 %setup -q
-
 
 %build
 %ifarch s390 s390x
@@ -38,17 +39,24 @@ mkdir -p %{buildroot}%{_sysconfdir}/rc.d/init.d
 mkdir -p %{buildroot}%{_mandir}/{man5,man8}
 make DESTDIR=%{buildroot} install
 
+install -m 644 cachefilesd.conf %{buildroot}%{_sysconfdir}
 install -m 755 cachefilesd.initd %{buildroot}%{_sysconfdir}/rc.d/init.d/cachefilesd
 
 %clean
 rm -rf $RPM_BUILD_ROOT
 
-%post
+%post 
 /sbin/chkconfig --add %{name}
 
 %preun
 if [ $1 -eq 0 ]; then
+	/sbin/service cachefilesd stop
 	/sbin/chkconfig --del %{name}
+fi
+
+%postun
+if [ "$1" -ge 1 ]; then
+	/sbin/service cachefilesd condrestart > /dev/null
 fi
 
 
@@ -61,6 +69,17 @@ fi
 %{_mandir}/*/*
 
 %changelog
+* Fri Aug 11 2006 David Howells <dhowells@redhat.com> 0.5-1
+- Rerun the scan after a deferral period if the cache is empty for initial scan
+
+* Tue Aug  8 2006 Steve Dickson <steved@redhat.com> 0.4-3
+- Updated init.d script to look for cachefilesd in /sbin
+- Added postun and preun rules so cachefilesd is stopped
+  and started when the rpm is updated or removed.
+
+* Tue Aug  7 2006 Jesse Keating <jkeating@redhat.com> 0.4-2
+- require /sbin/chkconfig not /usr/bin/chkconfig
+
 * Tue Aug  1 2006 David Howells <dhowells@redhat.com> 0.4-1
 - Discard use of autotools
 
@@ -69,7 +88,7 @@ fi
 
 * Fri Jul 28 2006 Steve Dickson <steved@redhat.com> 0.3-2
 - Added post and preun rules
-- Changed init.d script to up right before portmapper.
+- Changed init.d script to up right before portmapper. 
 
 * Fri Jun  9 2006 Steve Dickson <steved@redhat.com> 0.3-1
 - Incorporated David Howells manual page updates
@@ -81,3 +100,4 @@ fi
 
 * Sat Apr 22 2006 Steve Dickson <steved@redhat.com> 0.1-1
 - Initial commit
+
