@@ -33,8 +33,18 @@ All the other commands are optional:
 .B bcull <N>%
 .TP
 .B bstop <N>%
-These commands configure the culling limits.  The defaults are 7%, 5% and 1%
-respectively.  See the section on cache culling for more information.
+.TP
+.B frun <N>%
+.TP
+.B fcull <N>%
+.TP
+.B fstop <N>%
+These commands configure the culling limits.  The defaults are 7% (run), 5%
+(cull) and 1% (stop) respectively.  See the section on cache culling for more
+information.
+.IP
+The commands beginning with a 'b' are file space (block) limits, those
+beginning with an 'f' are file count limits.
 .TP
 .B tag <name>
 This command specifies a tag to FS-Cache to use in distinguishing multiple
@@ -88,28 +98,37 @@ discarding objects from the cache that have been used less recently than
 anything else.  Culling is based on the access time of data objects.  Empty
 directories are culled if not in use.
 .P
-Cache culling is done on the basis of the percentage of blocks available in the
-underlying filesystem.  There are three "limits":
+Cache culling is done on the basis of the percentage of blocks and the
+percentage of files available in the underlying filesystem.  There are six
+"limits":
 .TP
 .B brun
-If the amount of available space in the cache rises above this limit, then
-culling is turned off.
+.TP
+.B frun
+If the amount of free space and the number of available files in the cache
+rises above both these limits, then culling is turned off.
 .TP
 .B bcull
-If the amount of available space in the cache falls below this limit, then
-culling is started.
+.TP
+.B fcull
+If the amount of available space or the number of available files in the cache
+falls below either of these limits, then culling is started.
 .TP
 .B bstop
-If the amount of available space in the cache falls below this limit, then no
-further allocation of disk space is permitted until culling has raised the
-amount above this limit again.
+.TP
+.B fstop
+If the amount of available space or the number of available files in the cache
+falls below either of these limits, then no further allocation of disk space or
+files is permitted until culling has raised things above these limits again.
 .P
 These must be configured thusly:
 .IP
 0 <= bstop < bcull < brun < 100
+.br
+0 <= fstop < fcull < frun < 100
 .P
-Note that these are percentages of available space, and do \fInot\fP appear as
-100 minus the percentage displayed by the \fBdf\fP program.
+Note that these are percentages of available space and available files, and do
+\fInot\fP appear as 100 minus the percentage displayed by the \fBdf\fP program.
 .P
 The userspace daemon scans the cache to build up a table of cullable objects.
 These are then culled in least recently used order.  A new scan of the cache is

@@ -1,11 +1,11 @@
 Name:           cachefilesd
-Version:        0.5
+Version:        0.6
 Release:        1%{?dist}
 Summary:        CacheFiles userspace management daemon
 Group:          System Environment/Daemons
 License:        GPL
-URL:		http://people.redhat.com/~dhowells/fscache/
-Source0:        http://people.redhat.com/dhowells/fscache/cachefilesd-0.5.tar.bz2
+URL:  			http://people.redhat.com/~dhowells/fscache/
+Source0:        http://people.redhat.com/dhowells/fscache/cachefilesd-0.6.tar.bz2
 
 BuildRoot:      %{_tmppath}/%{name}-%{version}-root-%(%{__id_u} -n)
 BuildRequires: automake, autoconf
@@ -14,7 +14,7 @@ Requires(preun): /sbin/chkconfig, /sbin/service
 
 %description
 The cachefilesd daemon manages the caching files and directory that are
-that are used by network filesystems such a AFS and NFS to  
+that are used by network filesystems such a AFS and NFS to
 do persistent caching to the local disk.
 
 %prep
@@ -45,7 +45,7 @@ install -m 755 cachefilesd.initd %{buildroot}%{_sysconfdir}/rc.d/init.d/cachefil
 %clean
 rm -rf $RPM_BUILD_ROOT
 
-%post 
+%post
 /sbin/chkconfig --add %{name}
 
 %preun
@@ -69,8 +69,13 @@ fi
 %{_mandir}/*/*
 
 %changelog
-* Fri Aug 11 2006 David Howells <dhowells@redhat.com> 0.5-1
-- Rerun the scan after a deferral period if the cache is empty for initial scan
+* Wed Aug 30 2006 David Howells <dhowells@redhat.com> 0.6-1
+- Mark __error() as attribute format printf
+- Fix up format errors shown up
+
+* Fri Aug 11 2006 Steve Dickson <steved@redhat.com> 0.5-1
+- Upgraded to 0.5 which fixed initial scan problem when
+  started on an empty cache (bz 202184)
 
 * Tue Aug  8 2006 Steve Dickson <steved@redhat.com> 0.4-3
 - Updated init.d script to look for cachefilesd in /sbin
@@ -88,7 +93,7 @@ fi
 
 * Fri Jul 28 2006 Steve Dickson <steved@redhat.com> 0.3-2
 - Added post and preun rules
-- Changed init.d script to up right before portmapper. 
+- Changed init.d script to up right before portmapper.
 
 * Fri Jun  9 2006 Steve Dickson <steved@redhat.com> 0.3-1
 - Incorporated David Howells manual page updates
@@ -100,4 +105,3 @@ fi
 
 * Sat Apr 22 2006 Steve Dickson <steved@redhat.com> 0.1-1
 - Initial commit
-

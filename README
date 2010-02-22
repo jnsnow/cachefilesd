@@ -77,9 +77,15 @@ set up cache ready for use.  The following script commands are available:
  (*) brun <N>%
  (*) bcull <N>%
  (*) bstop <N>%
+ (*) frun <N>%
+ (*) fcull <N>%
+ (*) fstop <N>%
 
 	Configure the culling limits.  Optional.  See the section on culling
-	The defaults are 7%, 5% and 1% respectively.
+	The defaults are 7% (run), 5% (cull) and 1% (stop) respectively.
+
+	The commands beginning with a 'b' are file space (block) limits, those
+	beginning with an 'f' are file count limits.
 
  (*) dir <path>
 
@@ -161,31 +167,37 @@ discarding objects from the cache that have been used less recently than
 anything else.  Culling is based on the access time of data objects.  Empty
 directories are culled if not in use.
 
-Cache culling is done on the basis of the percentage of blocks available in the
-underlying filesystem.  There are three "limits":
+Cache culling is done on the basis of the percentage of blocks and the
+percentage of files available in the underlying filesystem.  There are six
+"limits":
 
  (*) brun
+ (*) frun
 
-     If the amount of available space in the cache rises above this limit, then
-     culling is turned off.
+     If the amount of free space and the number of available files in the cache
+     rises above both these limits, then culling is turned off.
 
  (*) bcull
+ (*) fcull
 
-     If the amount of available space in the cache falls below this limit, then
-     culling is started.
+     If the amount of available space or the number of available files in the
+     cache falls below either of these limits, then culling is started.
 
  (*) bstop
+ (*) fstop
 
-     If the amount of available space in the cache falls below this limit, then
-     no further allocation of disk space is permitted until culling has raised
-     the amount above this limit again.
+     If the amount of available space or the number of available files in the
+     cache falls below either of these limits, then no further allocation of
+     disk space or files is permitted until culling has raised things above
+     these limits again.
 
 These must be configured thusly:
 
 	0 <= bstop < bcull < brun < 100
+	0 <= fstop < fcull < frun < 100
 
-Note that these are percentages of available space, and do _not_ appear as 100
-minus the percentage displayed by the "df" program.
+Note that these are percentages of available space and available files, and do
+_not_ appear as 100 minus the percentage displayed by the "df" program.
 
 The userspace daemon scans the cache to build up a table of cullable objects.
 These are then culled in least recently used order.  A new scan of the cache is

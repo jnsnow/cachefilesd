@@ -16,6 +16,9 @@
  *	brun 10%
  *	bcull 7%
  *	bstop 3%
+ *	frun 10%
+ *	fcull 7%
+ *	fstop 3%
  *
  * Only "dir" is mandatory
  * Blank lines and lines beginning with a hash are comments
@@ -100,7 +103,7 @@ static char *cacheroot, *graveyardpath;
 static int xdebug, xnolog, xopenedlog;
 static int stop, reap, cull, statecheck;
 static int graveyardfd;
-static unsigned long long brun, bcull, bstop;
+static unsigned long long brun, bcull, bstop, frun, fcull, fstop;
 
 #define cachefd 3
 
@@ -122,7 +125,7 @@ static void help(void)
 	exit(2);
 }
 
-static void __error(int excode, const char *fmt, ...) __attribute__((noreturn));
+static void __error(int excode, const char *fmt, ...) __attribute__((noreturn, format(printf,2,3)));
 static void __error(int excode, const char *fmt, ...)
 {
 	va_list va;
@@ -149,7 +152,7 @@ static void __error(int excode, const char *fmt, ...)
 }
 
 #define error(FMT,...)		__error(3, "Internal error: "FMT"\n" ,##__VA_ARGS__)
-#define oserror(FMT,...)	__error(1, FMT": errno %d (%m)\n" ,errno ,##__VA_ARGS__)
+#define oserror(FMT,...)	__error(1, FMT": errno %d (%m)\n" ,##__VA_ARGS__ ,errno)
 #define cfgerror(FMT,...)	__error(2, "%s:%d:"FMT"\n", configfile, lineno ,##__VA_ARGS__)
 #define opterror(FMT,...)	__error(2, FMT"\n" ,##__VA_ARGS__)
 
@@ -692,6 +695,12 @@ static void read_cache_state(void)
 			bcull = strtoull(arg, NULL, 16);
 		else if (strcmp(tok, "bstop") == 0)
 			bstop = strtoull(arg, NULL, 16);
+		else if (strcmp(tok, "frun") == 0)
+			frun = strtoull(arg, NULL, 16);
+		else if (strcmp(tok, "fcull") == 0)
+			fcull = strtoull(arg, NULL, 16);
+		else if (strcmp(tok, "fstop") == 0)
+			fstop = strtoull(arg, NULL, 16);
 
 	} while ((tok = next));
 
@@ -1284,9 +1293,11 @@ static void decant_cull_table(void)
 
 	info("Decant (%d/%d to %d)", copy, avail, space);
 
-	/* make a hole in the ready table and fill it */
+	/* make a hole in the ready table transfer "copy" elements from the end
+	 * of cullbuild (oldest) to the beginning of cullready (youngest)
+	 */
 	n = oldest_ready + 1;
-	memmove(&cullready[space], &cullready[0], n * sizeof(cullready[0]));
+	memmove(&cullready[copy], &cullready[0], n * sizeof(cullready[0]));
 	oldest_ready += copy;
 
 	memcpy(&cullready[0], &cullbuild[leave], copy * sizeof(cullready[0]));
@@ -1294,7 +1305,7 @@ static void decant_cull_table(void)
 	oldest_build = leave - 1;
 
 	if (copy + leave > CULLTABLE_SIZE)
-		error("Scan table exceeded (%d+%d)", copy + leave);
+		error("Scan table exceeded (%d+%d)", copy, leave);
 
 check:
 	for (loop = 0; loop < oldest_ready; loop++)
