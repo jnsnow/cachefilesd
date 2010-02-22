@@ -125,8 +125,8 @@ static void help(void)
 	exit(2);
 }
 
-static void __error(int excode, const char *fmt, ...) __attribute__((noreturn, format(printf,2,3)));
-static void __error(int excode, const char *fmt, ...)
+static __attribute__((noreturn, format(printf, 2, 3)))
+void __error(int excode, const char *fmt, ...)
 {
 	va_list va;
 
@@ -156,7 +156,8 @@ static void __error(int excode, const char *fmt, ...)
 #define cfgerror(FMT,...)	__error(2, "%s:%d:"FMT"\n", configfile, lineno ,##__VA_ARGS__)
 #define opterror(FMT,...)	__error(2, FMT"\n" ,##__VA_ARGS__)
 
-static void __message(int dlevel, int level, const char *fmt, ...)
+static __attribute__((format(printf, 3, 4)))
+void __message(int dlevel, int level, const char *fmt, ...)
 {
 	va_list va;
 

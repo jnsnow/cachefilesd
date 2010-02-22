@@ -1,0 +1,268 @@
+			   ========================
+			   FILESYSTEM LOCAL CACHING
+			   ========================
+
+========
+CONTENTS
+========
+
+ (*) Introduction.
+
+ (*) Setting up a cache.
+
+ (*) Setting cache cull limits.
+
+ (*) Monitoring.
+
+ (*) Further information.
+
+
+============
+INTRODUCTION
+============
+
+Linux now supports local caching of certain filesystems (currently only NFS and
+the in-kernel AFS filesystems).  This permits remote data to be cached on local
+disk, thus potentially speeding up future accesses to that data by avoiding the
+need to go to the network and fetch it again.
+
+This facility (known as FS-Cache) is designed to be as transparent as possible
+to a user of the system.  Applications should just be able to use NFS files as
+normal, without any knowledge of there being a cache.
+
+The administrator has to set up the cache in the first place, tell the system
+to use it and then mark the NFS mount points they want caching, but the user
+need not see any of that.
+
+The facility can be conceptualised by the following diagram:
+
+	+--------+             +--------+       +--------+     +--------+
+	|        |   /\        |        |       |        |     |        |
+	|  NFS   |---  \  ---->|  NFS   |------>| Page   |---->| User   |
+	| Server |      \/     | Client |  ^    | Cache  |     | App    |
+	|        |   Network   |        |  |    | (RAM)  |     |        |
+	+--------+             +--------+  |    +--------+     +--------+
+	                          |        |
+	                          |  +-----+
+	                          V  |
+	                       +--------+     +--------+     +---------+
+	                       |        |     |        |     |         |
+	                       | FS-    |<--->| Cache  |<--->| /var/   |
+	                       | Cache  |     | Files  |     |  fscache|
+	                       |        |     |        |     |         |
+	                       +--------+     +--------+     +---------+
+
+When a user application reads data, data flows left to right along the top row.
+With a local cache is available, the NFS client copies any data it doesn't have
+a local copy of into the cache if there's space such that the second and
+subsequent times it tries to read that data, it retrieves it from the cache
+instead.
+
+FS-Cache is an intermediary between the network filesystems (such as NFS) and
+the actual cache backends (such as CacheFiles) that do the real work.  If there
+aren't any caches available, FS-Cache will smooth over the fact, with as little
+extra latency as possible.
+
+CacheFiles is the only cache backend currently available.  It uses files in a
+directory nominated by the administrator to store the data given to it.  The
+contents of the cache are persistent over reboots.
+
+
+==================
+SETTING UP A CACHE
+==================
+
+Setting up a cache should be straightforward.  The configuration for the
+in-filesystem cache backend (CacheFiles) is placed in /etc/cachefilesd.conf.
+There is a manual page available to cover the options in detail, but they will
+be overviewed here.  The cachefilesd package will need to be installed to use
+the cache.
+
+The administrator first needs to decide which directory they want to place the
+cache in (typically /var/fscache) and specify that to the system:
+
+	[/etc/cachefilesd.conf]
+	dir /var/fscache
+
+The cache will be stored in the filesystem that hosts that directory.  For
+something like a laptop, you'll probably want to select the root directory
+here, but for a main desktop machine you might want to mount a disk partition
+specifically for the cache.
+
+The filesystem must support user-defined extended attributes as these are used
+by CacheFiles to store coherency maintenance information.  User-defined
+extended attributes can be turned on on an Ext3 filesystem by doing the
+following:
+
+	tune2fs -o user_xattr /dev/hdxN
+
+or by mounting the filesystem like this:
+
+	mount /dev/hda6 /var/fscache/ -o user_xattr
+
+All other requirements should be met by using a RHEL5+ or FC6+ kernel and using
+Ext3 (ReiserFS and XFS will also meet the requirements).  See the "Further
+information" section for more information.
+
+
+The CacheFiles backend works by using up free space on the disk, caching remote
+data in it.  See the section on "Setting cache cull limits" for configuring how
+much free space it maintains.  This is, however, optional as defaults are set.
+
+
+Once the configuration file is in place, just start up the cachefilesd service:
+
+	service cachefilesd start
+
+And the cache is ready to go.  This can be made to happen automatically on boot
+by running this as root:
+
+	chkconfig cachefilesd on
+
+
+========================
+USING THE CACHE WITH NFS
+========================
+
+NFS will not use the cache unless explicitly told to do so.  This is done by
+attaching an extra option to an NFS mount ("-o fsc"), for instance:
+
+	mount fred:/ /fred -o fsc
+
+All the accesses to files under /fred will then be put through the cache,
+provided they aren't opened for direct I/O or opened for writing (see below).
+
+NFS supports caching for version 2, 3 and 4, though they'll use different
+branches of the cache for each.
+
+NFS keys the contents of the cache on the server and the NFS file handle,
+meaning that hard linked files share the cache correctly.
+
+
+CACHE LIMITATIONS WITH NFS
+--------------------------
+
+If a file is opened for direct-I/O, the cache will be bypassed because the I/O
+must be direct to the server.
+
+If the file is opened for writing, NFS version 2 and 3 protocols don't provide
+sufficient coherency management information for the client to be able to detect
+a write from another client that overlapped with one that it did.
+
+So if a file is opened for direct-I/O or for writing, the copy of the data
+cached on disk will be retired and that file will cease being cached until it
+is no longer being used by that client.
+
+
+=========================
+SETTING CACHE CULL LIMITS
+=========================
+
+The CacheFiles backend works by using up free space on the disk, caching remote
+data in it.  This could, potentially, consume the entirety of the free space,
+which if it was also your root partition, would be bad.  To control this,
+CacheFiles tries to maintain a certain amount of free space, and will shrink
+the cache to compensate if whatever else is on the disk grows.
+
+This can be controlled by three settings:
+
+	[/etc/cachefilesd.conf]
+	brun 20%
+	bcull 10%
+	bstop 5%
+
+These are specified as percentages of the total disk space.  When the amount of
+available free space drops below the "bcull" or "bstop" limits, the cache
+management daemon will start reducing the amount of data in the cache, and when
+the available free space rises above the "brun" limit, the culling will cease.
+This provides hysteresis.  Note that the following must hold true:
+
+	0 <= bstop < bcull < brun < 100
+
+
+Similarly, some filesystems have limited numbers of files that they can
+actually support (Ext3 for instance falls into this category).  If the data
+being pulled from the server is in lots of small files, then this can quickly
+use up all the files available to the cache without using up all the data.  To
+counter this problem, the cache tries to maintain a minimum percentage of free
+files, just as it does for available free space.  This can also be configured:
+
+	[/etc/cachefilesd.conf]
+	frun 20%
+	fcull 10%
+	fstop 5%
+
+And this must hold true:
+
+	0 <= fstop < fcull < frun < 100
+
+
+The defaults are 7% (run), 5% (cull) and 1% (stop) for both groups of settings.
+
+When the bstop or fstop limit is reached, no more data will be added to the
+cache until appropriate parameter falls back beneath the run limit.
+
+
+==========
+MONITORING
+==========
+
+The state of NFS filesystem caching can be monitored to a certain extent by the
+data exposed through files in /proc/sys/fs/nfs/:
+
+ (*) nfs_fscache_to_pages
+
+	The number of pages of data NFS has added to the cache.
+
+ (*) nfs_fscache_from_pages
+
+	The number of pages of data NFS has retrieved from the cache.
+
+ (*) nfs_fscache_uncache_page
+
+	The number of active page bindings that NFS has removed from the
+	cache. (Note that just because a page binding has been released, it
+	does not mean the page has been removed from the cache, just that NFS
+	is no longer using that particular bit of the cache at the moment).
+
+ (*) nfs_fscache_from_error
+
+	The last error incurred when reading page(s) from the cache.
+
+ (*) nfs_fscache_to_error
+
+	The last error incurred when writing a page to the cache.
+
+Note that these sysctl parameters are only temporary and will be integrated in
+to the NFS per-mount statistics sometime in the future.
+
+
+Futhermore, the caching state of individual mountpoints can be examined through
+other /proc files.  For instance:
+
+	[root@andromeda ~]# cat /proc/fs/nfsfs/servers
+	NV SERVER   PORT USE HOSTNAME
+	v4 ac101209  801   1 home0
+	[root@andromeda ~]# cat /proc/fs/nfsfs/volumes
+	NV SERVER   PORT DEV     FSID              FSC
+	v4 ac101209  801 0:16    9:2               no
+	v4 ac101209  801 0:17    9:3               yes
+
+The "FSC" column says "yes" when the system has been asked to cache a
+particular NFS share/volume/export, and "no" when it hasn't.
+
+
+===================
+FURTHER INFORMATION
+===================
+
+On the subject of the CacheFiles facility and configuring it:
+
+	/usr/share/doc/cachefilesd-0.5/README
+	/usr/share/man/man5/cachefilesd.conf.5.gz
+	/usr/share/man/man8/cachefilesd.8.gz
+
+For general information, including the design constraints and capabilities,
+see:
+
+	/usr/share/doc/kernel-doc-2.6.17/Documentation/filesystems/caching/fscache.txt
