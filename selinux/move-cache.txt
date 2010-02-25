@@ -5,7 +5,7 @@
 If the cache is being used on a system on which SELinux is active and running
 in enforcing mode, then the security policy installed by the cachefilesd RPM
 needs to be updated to permit the CacheFiles module and daemon to access the
-cache.
+cache if the cache is moved.
 
 The simplest way to do this is to add an auxiliary policy to mark out the
 location of the new cache, whilst leaving the old location still available for
@@ -31,8 +31,8 @@ ADDING AN AUXILIARY POLICY
 Creating and adding an auxiliary policy is very easy.  Follow the following
 steps:
 
- (0) Check that checkpolicy and selinux-policy-devel packages are installed.
-     These are needed to build your policy.
+ (0) Check that checkpolicy and selinux-policy* packages are installed.  These
+     are needed to build your policy.
 
  (1) Create a new directory and go into it.
 
@@ -74,6 +74,7 @@ steps:
 
  (8) Modify /etc/cachefilesd.conf to point to the correct directory and then
      start the cachefilesd service.
+
 
 The auxiliary policy can be later removed by:
 

@@ -9,9 +9,6 @@ Group:          System Environment/Daemons
 License:        GPL
 URL:  		http://people.redhat.com/~dhowells/fscache/
 Source0:        http://people.redhat.com/dhowells/fscache/cachefilesd-%{version}.tar.bz2
-Source1:        cachefilesd.if
-Source2:        cachefilesd.te
-Source3:        cachefilesd.fc
 
 BuildRoot:      %{_tmppath}/%{name}-%{version}-root-%(%{__id_u} -n)
 BuildRequires: automake, autoconf
@@ -39,8 +36,6 @@ SELinux policy module supporting cachefilesd
 
 %prep
 %setup -q
-mkdir SELinux
-cp -p %{SOURCE1} %{SOURCE2} %{SOURCE3} SELinux
 
 %build
 %ifarch s390 s390x
@@ -54,11 +49,13 @@ CFLAGS="`echo $RPM_OPT_FLAGS $ARCH_OPT_FLAGS $PIE`"
 make all
 
 # Build SELinux policy modules
-cd SELinux
+cd selinux
 for selinuxvariant in %{selinux_variants}
 do
     make NAME=${selinuxvariant} -f /usr/share/selinux/devel/Makefile
-    mv cachefilesd.pp cachefilesd.pp.${selinuxvariant}
+    mkdir ${selinuxvariant}
+    mv cachefilesd.pp ${selinuxvariant}/cachefilesd.pp
+    bzip2 -9 ${selinuxvariant}/cachefilesd.pp
     make NAME=${selinuxvariant} -f /usr/share/selinux/devel/Makefile clean
 done
 cd -
@@ -69,19 +66,21 @@ mkdir -p %{buildroot}/sbin
 mkdir -p %{buildroot}%{_sysconfdir}/rc.d/init.d
 mkdir -p %{buildroot}%{_mandir}/{man5,man8}
 mkdir -p %{buildroot}/usr/share/doc/%{name}-%{version}
+mkdir -p %{buildroot}/usr/share/doc/%{name}-selinux-%{version}
 mkdir -p %{buildroot}%{_localstatedir}/fscache
 make DESTDIR=%{buildroot} install
 
 install -m 644 cachefilesd.conf %{buildroot}%{_sysconfdir}
 install -m 755 cachefilesd.initd %{buildroot}%{_sysconfdir}/rc.d/init.d/cachefilesd
+install -m 644 selinux/move-cache.txt %{buildroot}/usr/share/doc/%{name}-selinux-%{version}/
 
 # Install SELinux policy modules
-cd SELinux
+cd selinux
 for selinuxvariant in %{selinux_variants}
 do
     install -d %{buildroot}%{_datadir}/selinux/${selinuxvariant}
-    install -p -m 644 cachefilesd.pp.${selinuxvariant} \
-           %{buildroot}%{_datadir}/selinux/${selinuxvariant}/cachefilesd.pp
+    install -p -m 644 ${selinuxvariant}/cachefilesd.pp.bz2 \
+           %{buildroot}%{_datadir}/selinux/${selinuxvariant}
 done
 cd -
 
@@ -103,7 +102,7 @@ fi
 for selinuxvariant in %{selinux_variants}
 do
   /usr/sbin/semodule -s ${selinuxvariant} -i \
-    %{_datadir}/selinux/${selinuxvariant}/cachefilesd.pp &> /dev/null || :
+    %{_datadir}/selinux/${selinuxvariant}/cachefilesd.pp.bz2 &> /dev/null || :
 done
 
 %preun
@@ -135,7 +134,6 @@ fi
 %defattr(-,root,root)
 %doc README
 %doc howto.txt
-%doc move-cache.txt
 %config(noreplace) %{_sysconfdir}/cachefilesd.conf
 %attr(0755,root,root) %{_sysconfdir}/rc.d/init.d/cachefilesd
 /sbin/*
@@ -144,10 +142,18 @@ fi
 
 %files selinux
 %defattr(-,root,root,0755)
-%doc SELinux/*
-%{_datadir}/selinux/*/cachefilesd.pp
+%doc selinux/move-cache.txt
+%doc selinux/*.fc
+%doc selinux/*.if
+%doc selinux/*.te
+%{_datadir}/selinux/*/cachefilesd.pp.bz2
 
 %changelog
+
+* Thu Feb 25 2010 David Howells <dhowells@redhat.com>
+- Fix the SELinux policies for cachefilesd.
+- Compress the installed policy files.
+
 * Tue Feb 23 2010 David Howells <dhowells@redhat.com>
 - Must include sys/stat.h to use stat() and co. [RH BZ 565135].
 - Remove tail comments from functions.
