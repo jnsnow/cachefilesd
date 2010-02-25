@@ -215,8 +215,7 @@ static void cull_objects(void);
 static void sigterm(int sig)
 {
 	stop = 1;
-
-} /* end sigterm() */
+}
 
 /*****************************************************************************/
 /*
@@ -225,8 +224,7 @@ static void sigterm(int sig)
 static void sigio(int sig)
 {
 	reap = 1;
-
-} /* end sigio() */
+}
 
 /*****************************************************************************/
 /*
@@ -235,8 +233,7 @@ static void sigio(int sig)
 static void sigalrm(int sig)
 {
 	jumpstart_scan = 1;
-
-} /* end sigalrm() */
+}
 
 /*****************************************************************************/
 /*
@@ -253,8 +250,7 @@ static void write_pidfile(void)
 	if (fprintf(pf, "%d\n", getpid()) < 0 ||
 	    fclose(pf) == EOF)
 		oserror("Unable to write PID file: %s", pidfile);
-
-} /* end write_pidfile() */
+}
 
 /*****************************************************************************/
 /*
@@ -507,8 +503,7 @@ int main(int argc, char *argv[])
 	}
 
 	exit(0);
-
-} /* end main() */
+}
 
 /*****************************************************************************/
 /*
@@ -543,8 +538,7 @@ static void open_cache(void)
 	    sfs.f_bfree == -1 ||
 	    sfs.f_bavail == -1)
 		error("Backing filesystem returns unusable statistics through fstatfs()");
-
-} /* end open_cache() */
+}
 
 /*****************************************************************************/
 /*
@@ -629,8 +623,7 @@ static void cachefilesd(void)
 
 	notice("Daemon Terminated");
 	exit(0);
-
-} /* end cachefilesd() */
+}
 
 /*****************************************************************************/
 /*
@@ -645,8 +638,7 @@ static void reap_graveyard(void)
 		oserror("unable to set notification on graveyard");
 
 	reap_graveyard_aux(graveyardpath);
-
-} /* end reap_graveyard() */
+}
 
 /*****************************************************************************/
 /*
@@ -714,8 +706,7 @@ static void reap_graveyard_aux(const char *dirname)
 
 	if (chdir("..") < 0)
 		oserror("Unable to chdir to ..");
-
-} /* end reap_graveyard_aux() */
+}
 
 /*****************************************************************************/
 /*
@@ -757,8 +748,7 @@ static void read_cache_state(void)
 			fstop = strtoull(arg, NULL, 16);
 
 	} while ((tok = next));
-
-} /* end read_cache_state() */
+}
 
 /*****************************************************************************/
 /*
@@ -777,8 +767,7 @@ static int is_object_in_use(const char *filename)
 		oserror("Failed to check object's in-use state");
 
 	return ret < 0 && errno == EBUSY ? 1 : 0;
-
-} /* end is_object_in_use */
+}
 
 /*****************************************************************************/
 /*
@@ -796,8 +785,7 @@ static void cull_file(const char *filename)
 	ret = write(cachefd, buffer, n);
 	if (ret < 0 && errno != ESTALE && errno != ENOENT && errno != EBUSY)
 		oserror("Failed to cull object");
-
-} /* end cull_file() */
+}
 
 /*****************************************************************************/
 /*
@@ -877,8 +865,7 @@ static struct object *create_object(struct object *parent,
 
 	nobjects++;
 	return object;
-
-} /* end create_object() */
+}
 
 /*****************************************************************************/
 /*
@@ -923,8 +910,7 @@ static void put_object(struct object *object)
 
 	if (parent)
 		put_object(parent);
-
-} /* end put_object() */
+}
 
 /*****************************************************************************/
 /*
@@ -954,8 +940,7 @@ static void destroy_unexpected_object(struct object *parent, struct dirent *de)
 			oserror("Unable to rename unexpectedly named file: %s",
 				de->d_name);
 	}
-
-} /* end destroy_unexpected_object() */
+}
 
 /*****************************************************************************/
 /*
@@ -1086,8 +1071,7 @@ static void insert_into_cull_table(struct object *object)
 		(y - 2) * sizeof(cullbuild[0]));
 
 	cullbuild[y - 1] = object;
-
-} /* end insert_into_cull_table() */
+}
 
 /*****************************************************************************/
 /*
@@ -1322,8 +1306,7 @@ found_unexpected_object:
 
 	destroy_unexpected_object(curr, &dirent);
 	goto next;
-
-} /* end build_cull_table() */
+}
 
 /*****************************************************************************/
 /*
@@ -1399,8 +1382,7 @@ check:
 	for (loop = 0; loop < oldest_ready; loop++)
 		if (((long)cullready[loop] & 0xf0000000) == 0x60000000)
 			abort();
-
-} /* end decant_cull_table() */
+}
 
 /*****************************************************************************/
 /*
@@ -1430,8 +1412,7 @@ static int get_dir_fd(struct object *dir)
 	debug(1, "<%d>/%s to %d", parentfd, dir->name, fd);
 	close(parentfd);
 	return fd;
-
-} /* end get_dir_fd() */
+}
 
 /*****************************************************************************/
 /*
@@ -1464,8 +1445,7 @@ static void cull_object(struct object *object)
 
 object_already_gone:
 	put_object(object);
-
-} /* end cull_object() */
+}
 
 /*****************************************************************************/
 /*
@@ -1490,5 +1470,4 @@ static void cull_objects(void)
 		root.usage++;
 		scan = &root;
 	}
-
-} /* end cull_objects() */
+}

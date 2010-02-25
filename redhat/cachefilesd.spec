@@ -150,6 +150,7 @@ fi
 %changelog
 * Tue Feb 23 2010 David Howells <dhowells@redhat.com>
 - Must include sys/stat.h to use stat() and co. [RH BZ 565135].
+- Remove tail comments from functions.
 
 * Thu Aug 9 2007 David Howells <dhowells@redhat.com> 0.9-1
 - The cachefiles module no longer accepts directory fds on cull and inuse
