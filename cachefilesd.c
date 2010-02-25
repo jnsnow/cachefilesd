@@ -46,6 +46,7 @@
 #include <sys/inotify.h>
 #include <sys/time.h>
 #include <sys/vfs.h>
+#include <sys/stat.h>
 
 typedef enum objtype {
 	OBJTYPE_INDEX,
