@@ -27,6 +27,8 @@
  * NUL characters are cause for error
  */
 
+#define CACHEFILESD_VERSION "0.10"
+
 #define _GNU_SOURCE
 #include <stdarg.h>
 #include <stdio.h>
@@ -111,12 +113,20 @@ static unsigned long long brun, bcull, bstop, frun, fcull, fstop;
 
 #define cachefd 3
 
-static void help(void) __attribute__((noreturn));
-static void help(void)
+static __attribute__((noreturn))
+void version(void)
+{
+	printf("cachefilesd version " CACHEFILESD_VERSION "\n");
+	exit(0);
+}
+
+static __attribute__((noreturn))
+void help(void)
 {
 	fprintf(stderr,
 		"Format:\n"
 		"  /sbin/cachefilesd [-d]* [-s] [-n] [-p <pidfile>] [-f <configfile>]\n"
+		"  /sbin/cachefilesd -v\n"
 		"\n"
 		"Options:\n"
 		"  -d\tIncrease debugging level (cumulative)\n"
@@ -124,6 +134,7 @@ static void help(void)
 		"  -s\tMessage output to stderr instead of syslog\n"
 		"  -p <pidfile>\tWrite the PID into the file\n"
 		"  -f <configfile>\n"
+		"  -v\tPrint version and exit\n"
 		"\tRead the specified configuration file instead of"
 		" /etc/cachefiles.conf\n");
 
@@ -271,8 +282,11 @@ int main(int argc, char *argv[])
 	if (argc == 2 && strcmp(argv[1], "--help") == 0)
 		help();
 
+	if (argc == 2 && strcmp(argv[1], "--version") == 0)
+		version();
+
 	/* parse the arguments */
-	while (opt = getopt(argc, argv, "dsnf:p:"),
+	while (opt = getopt(argc, argv, "dsnf:p:v"),
 	       opt != EOF
 	       ) {
 		switch (opt) {
@@ -300,6 +314,10 @@ int main(int argc, char *argv[])
 			/* use a specific PID file */
 			pidfile = optarg;
 			break;
+
+		case 'v':
+			/* print the version and exit */
+			version();
 
 		default:
 			opterror("Unknown commandline option '%c'", optopt);
