@@ -69,6 +69,12 @@ indicates a table of 4096 entries and 13 indicates 8192 entries.  The
 permissible values are between 12 and 20, the latter indicating 1048576
 entries.  The default is 12.
 .TP
+.B nocull
+Disable culling.  Culling and building up the cull table take up a certain
+amount of a systems resources, which may be undesirable.  Supplying this option
+disables all culling activity.  The cache will keep building up to the limits
+set and won't be shrunk, except by the removal of out-dated cache files.
+.TP
 .B debug <mask>
 This command specifies a numeric bitmask to control debugging in the kernel
 module.  The default is zero (all off).  The following values can be OR'd into
@@ -161,6 +167,8 @@ The userspace daemon scans the cache to build up a table of cullable objects.
 These are then culled in least recently used order.  A new scan of the cache is
 started as soon as space is made in the table.  Objects will be skipped if
 their atimes have changed or if the kernel module says it is still using them.
+.P
+Culling can be disabled with the \fBnocull\fP option.
 .SH SEE ALSO
 \fBcachefilesd\fR(8), \fBdf\fR(1), /usr/share/doc/cachefilesd-*/README
 .SH AUTHORS

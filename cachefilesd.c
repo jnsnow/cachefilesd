@@ -105,7 +105,7 @@ static const char *pidfile = "/var/run/cachefilesd.pid";
 static char *cacheroot, *graveyardpath;
 
 static int xdebug, xnolog, xopenedlog;
-static int stop, reap, cull; //, statecheck;
+static int stop, reap, cull, nocull; //, statecheck;
 static int graveyardfd;
 static unsigned long long brun, bcull, bstop, frun, fcull, fstop;
 
@@ -389,6 +389,12 @@ int main(int argc, char *argv[])
 		if (*cp == '#')
 			continue;
 
+		/*  allow culling to be disabled */
+		if (memcmp(cp, "nocull", 6) == 0 &&
+		    (!cp[6] || isspace(cp[6]))) {
+			nocull = 1;
+		}
+
 		/* note the cull table size command */
 		if (memcmp(cp, "culltable", 9) == 0 && isspace(cp[9])) {
 			unsigned long cts;
@@ -445,13 +451,15 @@ int main(int argc, char *argv[])
 		oserror("Unable to close %s", configfile);
 
 	/* allocate the cull tables */
-	cullbuild = calloc(culltable_size, sizeof(cullbuild[0]));
-	if (!cullbuild)
-		oserror("calloc");
+	if (!nocull) {
+		cullbuild = calloc(culltable_size, sizeof(cullbuild[0]));
+		if (!cullbuild)
+			oserror("calloc");
 
-	cullready = calloc(culltable_size, sizeof(cullready[0]));
-	if (!cullready)
-		oserror("calloc");
+		cullready = calloc(culltable_size, sizeof(cullready[0]));
+		if (!cullready)
+			oserror("calloc");
+	}
 
 	/* leave stdin, stdout, stderr and cachefd open only */
 	if (nullfd != 0)
@@ -595,27 +603,31 @@ static void cachefilesd(void)
 			read_cache_state();
 		}
 
-		if (jumpstart_scan) {
-			jumpstart_scan = 0;
-			if (!stop && !scan) {
-				notice("Refilling cull table");
-				root.usage++;
-				scan = &root;
+		if (nocull) {
+			cull = 0;
+		} else {
+			if (jumpstart_scan) {
+				jumpstart_scan = 0;
+				if (!stop && !scan) {
+					notice("Refilling cull table");
+					root.usage++;
+					scan = &root;
+				}
 			}
+
+			if (cull) {
+				if (oldest_ready >= 0)
+					cull_objects();
+				else if (oldest_build < 0)
+					jumpstart_scan = 1;
+			}
+
+			if (scan)
+				build_cull_table();
+
+			if (!scan && oldest_ready < 0 && oldest_build >= 0)
+				decant_cull_table();
 		}
-
-		if (cull) {
-			if (oldest_ready >= 0)
-				cull_objects();
-			else if (oldest_build < 0)
-				jumpstart_scan = 1;
-		}
-
-		if (scan)
-			build_cull_table();
-
-		if (!scan && oldest_ready < 0 && oldest_build >= 0)
-			decant_cull_table();
 
 		if (reap)
 			reap_graveyard();
