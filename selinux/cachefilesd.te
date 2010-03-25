@@ -102,7 +102,7 @@ files_pid_filetrans(cachefilesd_t,cachefilesd_var_run_t,file)
 allow cachefilesd_t cachefiles_dev_t : chr_file rw_file_perms;
 
 # Allow access to cache superstructure
-allow cachefilesd_t cachefiles_var_t : dir rw_dir_perms;
+allow cachefilesd_t cachefiles_var_t : dir { rw_dir_perms rmdir };
 allow cachefilesd_t cachefiles_var_t : file { getattr rename unlink };
 
 # Permit statfs on the backing filesystem
