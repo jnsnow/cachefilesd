@@ -1,6 +1,3 @@
-%define selinux_variants mls strict targeted
-%define selinux_policyver %(sed -e 's,.*selinux-policy-\\([^/]*\\)/.*,\\1,' /usr/share/selinux/devel/policyhelp)
-
 Name:           cachefilesd
 Version:        0.10
 Release:        1%{?dist}
@@ -14,25 +11,12 @@ BuildRoot:      %{_tmppath}/%{name}-%{version}-root-%(%{__id_u} -n)
 BuildRequires: automake, autoconf
 Requires(post): /sbin/chkconfig, /sbin/service
 Requires(preun): /sbin/chkconfig, /sbin/service
-Requires:       %{name}-selinux = %{version}-%{release}
+Requires:       selinux-policy-base = 3.7.10-5
 
 %description
 The cachefilesd daemon manages the caching files and directory that are
 that are used by network filesystems such a AFS and NFS to
 do persistent caching to the local disk.
-
-%package selinux
-Summary:        SELinux policy module supporting cachefilesd
-Group:          System Environment/Base
-BuildRequires:  checkpolicy, selinux-policy-devel, hardlink
-%if "%{selinux_policyver}" != ""
-Requires:       selinux-policy >= %{selinux_policyver}
-%endif
-Requires(post):   /usr/sbin/semodule, /sbin/restorecon
-Requires(postun): /usr/sbin/semodule, /sbin/restorecon
-
-%description selinux
-SELinux policy module supporting cachefilesd
 
 %prep
 %setup -q
@@ -48,18 +32,6 @@ CFLAGS="`echo $RPM_OPT_FLAGS $ARCH_OPT_FLAGS $PIE`"
 
 make all
 
-# Build SELinux policy modules
-cd selinux
-for selinuxvariant in %{selinux_variants}
-do
-    make NAME=${selinuxvariant} -f /usr/share/selinux/devel/Makefile
-    mkdir ${selinuxvariant}
-    mv cachefilesd.pp ${selinuxvariant}/cachefilesd.pp
-    bzip2 -9 ${selinuxvariant}/cachefilesd.pp
-    make NAME=${selinuxvariant} -f /usr/share/selinux/devel/Makefile clean
-done
-cd -
-
 %install
 rm -rf %{buildroot}
 mkdir -p %{buildroot}/sbin
@@ -72,20 +44,7 @@ make DESTDIR=%{buildroot} install
 
 install -m 644 cachefilesd.conf %{buildroot}%{_sysconfdir}
 install -m 755 cachefilesd.initd %{buildroot}%{_sysconfdir}/rc.d/init.d/cachefilesd
-install -m 644 selinux/move-cache.txt %{buildroot}/usr/share/doc/%{name}-selinux-%{version}/
-
-# Install SELinux policy modules
-cd selinux
-for selinuxvariant in %{selinux_variants}
-do
-    install -d %{buildroot}%{_datadir}/selinux/${selinuxvariant}
-    install -p -m 644 ${selinuxvariant}/cachefilesd.pp.bz2 \
-           %{buildroot}%{_datadir}/selinux/${selinuxvariant}
-done
-cd -
-
-# Hardlink identical policy module packages together
-/usr/sbin/hardlink -cv %{buildroot}%{_datadir}/selinux
+install -m 644 selinux/move-cache.txt %{buildroot}/usr/share/doc/%{name}-%{version}/
 
 %clean
 rm -rf $RPM_BUILD_ROOT
@@ -96,14 +55,6 @@ rm -rf $RPM_BUILD_ROOT
 if [ "$1" -ge 1 ]; then
 	/sbin/service cachefilesd condrestart > /dev/null
 fi
-
-%post selinux
-# Install SELinux policy modules
-for selinuxvariant in %{selinux_variants}
-do
-  /usr/sbin/semodule -s ${selinuxvariant} -i \
-    %{_datadir}/selinux/${selinuxvariant}/cachefilesd.pp.bz2 &> /dev/null || :
-done
 
 %preun
 if [ $1 -eq 0 ]; then
@@ -117,38 +68,24 @@ if [ $1 -eq 0 ]; then
 	/sbin/restorecon -R %{_localstatedir}/fscache || :
 fi
 
-%postun selinux
-# Clean up after package removal
-if [ $1 -eq 0 ]; then
-  # Remove SELinux policy modules
-  for selinuxvariant in %{selinux_variants}
-  do
-    /usr/sbin/semodule -s ${selinuxvariant} -r cachefilesd &> /dev/null || :
-  done
-  # Clean up any remaining file contexts (shouldn't be any really)
-  [ -d %{_localstatedir}/fscache ] && \
-    /sbin/restorecon -R %{_localstatedir}/fscache &> /dev/null || :
-fi
-
 %files
 %defattr(-,root,root)
 %doc README
 %doc howto.txt
+%doc selinux/move-cache.txt
+%doc selinux/*.fc
+%doc selinux/*.if
+%doc selinux/*.te
 %config(noreplace) %{_sysconfdir}/cachefilesd.conf
 %attr(0755,root,root) %{_sysconfdir}/rc.d/init.d/cachefilesd
 /sbin/*
 %{_mandir}/*/*
 %{_localstatedir}/fscache
 
-%files selinux
-%defattr(-,root,root,0755)
-%doc selinux/move-cache.txt
-%doc selinux/*.fc
-%doc selinux/*.if
-%doc selinux/*.te
-%{_datadir}/selinux/*/cachefilesd.pp.bz2
-
 %changelog
+* Fri Apr 23 2010 David Howells <dhowells@redhat.com>
+- The SELinux policies for cachefilesd now live in the selinux-policy RPM, so
+  the cachefilesd-selinux RPM is now redundant.
 
 * Thu Feb 25 2010 David Howells <dhowells@redhat.com>
 - Fix the SELinux policies for cachefilesd.

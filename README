@@ -362,11 +362,11 @@ not read or write files in the cache, and so it is precluded from accessing the
 data cached therein; nor is it permitted to create new files in the cache.
 
 
-The policy source files are installed for reference as:
+The policy source files are for reference installed as:
 
-	/usr/share/doc/cachefilesd-selinux-*/cachefilesd.te
-	/usr/share/doc/cachefilesd-selinux-*/cachefilesd.fc
-	/usr/share/doc/cachefilesd-selinux-*/cachefilesd.if
+	/usr/share/doc/cachefilesd-*/cachefilesd.te
+	/usr/share/doc/cachefilesd-*/cachefilesd.fc
+	/usr/share/doc/cachefilesd-*/cachefilesd.if
 
 By default, the cache is located in /var/fscache, but if it is desirable that
 it should be elsewhere, than either the above policy files must be altered, or
@@ -378,5 +378,5 @@ located elsewhere when SELinux is in enforcing mode, please see:
 
 	/usr/share/doc/cachefilesd-*/move-cache.txt
 
-When the cachefilesd rpm is installed; alternatively, the document can be found
+When the cachefilesd RPM is installed; alternatively, the document can be found
 in the sources.
