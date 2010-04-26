@@ -27,7 +27,7 @@
  * NUL characters are cause for error
  */
 
-#define CACHEFILESD_VERSION "0.10"
+#define CACHEFILESD_VERSION "0.10.1"
 
 #define _GNU_SOURCE
 #include <stdarg.h>

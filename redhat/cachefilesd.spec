@@ -1,5 +1,5 @@
 Name:           cachefilesd
-Version:        0.10
+Version:        0.10.1
 Release:        1%{?dist}
 Summary:        CacheFiles userspace management daemon
 Group:          System Environment/Daemons
