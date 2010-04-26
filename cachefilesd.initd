@@ -19,13 +19,14 @@ fi
 [ "${NETWORKING}" = "no" ] && exit 0
 
 
-OPTIONS=""
 RETVAL=0
+CONFFILE=/etc/cachefilesd.conf
 LOCKFILE=/var/lock/subsys/cachefilesd
 PIDFILE=/var/run/cachefilesd.pid
 MODPROBE=/sbin/modprobe
 MODPROBE_ARGS=""
 PROG="cachefilesd"
+OPTIONS="-f $CONFFILE"
 
 [ ! -x /sbin/$PROG ] && exit 0
 
@@ -41,6 +42,11 @@ case "$1" in
 	rm -f $LOCKFILE
 
 	echo -n $"Starting $PROG: "
+
+	# Set security contexts 
+	/sbin/restorecon /sbin/cachefilesd
+	/sbin/restorecon /dev/cachefiles
+	/sbin/restorecon -R `awk -- '/^dir/ { print $2 }' $CONFFILE`
 
 	# Load the cachefiles module if needed
 	[ -x "$MODPROBE" ] && {
