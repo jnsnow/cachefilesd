@@ -627,7 +627,7 @@ static void cachefilesd(void)
 			if (jumpstart_scan) {
 				jumpstart_scan = 0;
 				if (!stop && !scan) {
-					notice("Refilling cull table");
+					debug(1, "Refilling cull table");
 					root.usage++;
 					scan = &root;
 				}
@@ -1496,7 +1496,7 @@ static void cull_objects(void)
 	if (!scan && oldest_build <= culltable_size / 2 + 2) {
 		decant_cull_table();
 
-		notice("Refilling cull table");
+		debug(1, "Refilling cull table");
 		root.usage++;
 		scan = &root;
 	}
