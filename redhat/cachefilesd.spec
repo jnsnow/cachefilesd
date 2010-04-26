@@ -89,6 +89,7 @@ fi
 - Move the default cache dir to /var/cache/fscache.
 - Make the initscript do a restorecon when starting the cache to make sure the
   labels are correct.
+- Fix a wildchar that should be a literal dot in the SELinux policy.
 
 * Thu Feb 25 2010 David Howells <dhowells@redhat.com>
 - Fix the SELinux policies for cachefilesd.
