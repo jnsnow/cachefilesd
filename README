@@ -368,10 +368,10 @@ The policy source files are for reference installed as:
 	/usr/share/doc/cachefilesd-*/cachefilesd.fc
 	/usr/share/doc/cachefilesd-*/cachefilesd.if
 
-By default, the cache is located in /var/fscache, but if it is desirable that
-it should be elsewhere, than either the above policy files must be altered, or
-an auxiliary policy must be installed to label the alternate location of the
-cache.
+By default, the cache is located in /var/cache/fscache, but if it is desirable
+that it should be elsewhere, than either the above policy files must be
+altered, or an auxiliary policy must be installed to label the alternate
+location of the cache.
 
 For instructions on how to add an auxiliary policy to enable the cache to be
 located elsewhere when SELinux is in enforcing mode, please see:

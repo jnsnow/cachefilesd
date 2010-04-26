@@ -11,7 +11,7 @@
  *
  * Configuration file goes in /etc/cachefiles.conf and is of the form:
  *
- *	dir /var/fscache
+ *	dir /var/cache/fscache
  *	tag mycache
  *	brun 10%
  *	bcull 7%

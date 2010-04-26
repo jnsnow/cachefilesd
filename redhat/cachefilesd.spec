@@ -11,7 +11,7 @@ BuildRoot:      %{_tmppath}/%{name}-%{version}-root-%(%{__id_u} -n)
 BuildRequires: automake, autoconf
 Requires(post): /sbin/chkconfig, /sbin/service
 Requires(preun): /sbin/chkconfig, /sbin/service
-Requires:       selinux-policy-base = 3.7.10-5
+Requires:       selinux-policy-base = 3.7.19-5
 
 %description
 The cachefilesd daemon manages the caching files and directory that are
@@ -39,7 +39,7 @@ mkdir -p %{buildroot}%{_sysconfdir}/rc.d/init.d
 mkdir -p %{buildroot}%{_mandir}/{man5,man8}
 mkdir -p %{buildroot}/usr/share/doc/%{name}-%{version}
 mkdir -p %{buildroot}/usr/share/doc/%{name}-selinux-%{version}
-mkdir -p %{buildroot}%{_localstatedir}/fscache
+mkdir -p %{buildroot}%{_localstatedir}/cache/fscache
 make DESTDIR=%{buildroot} install
 
 install -m 644 cachefilesd.conf %{buildroot}%{_sysconfdir}
@@ -65,7 +65,7 @@ fi
 %postun
 if [ $1 -eq 0 ]; then
 	# Fix up non-standard directory context
-	/sbin/restorecon -R %{_localstatedir}/fscache || :
+	/sbin/restorecon -R %{_localstatedir}/cache/fscache || :
 fi
 
 %files
@@ -80,12 +80,13 @@ fi
 %attr(0755,root,root) %{_sysconfdir}/rc.d/init.d/cachefilesd
 /sbin/*
 %{_mandir}/*/*
-%{_localstatedir}/fscache
+%{_localstatedir}/cache/fscache
 
 %changelog
 * Fri Apr 23 2010 David Howells <dhowells@redhat.com>
 - The SELinux policies for cachefilesd now live in the selinux-policy RPM, so
   the cachefilesd-selinux RPM is now redundant.
+- Move the default cache dir to /var/cache/fscache.
 
 * Thu Feb 25 2010 David Howells <dhowells@redhat.com>
 - Fix the SELinux policies for cachefilesd.

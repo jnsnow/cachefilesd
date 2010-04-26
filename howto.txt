@@ -81,10 +81,10 @@ be overviewed here.  The cachefilesd package will need to be installed to use
 the cache.
 
 The administrator first needs to decide which directory they want to place the
-cache in (typically /var/fscache) and specify that to the system:
+cache in (typically /var/cache/fscache) and specify that to the system:
 
 	[/etc/cachefilesd.conf]
-	dir /var/fscache
+	dir /var/cache/fscache
 
 The cache will be stored in the filesystem that hosts that directory.  For
 something like a laptop, you'll probably want to select the root directory
@@ -100,7 +100,7 @@ following:
 
 or by mounting the filesystem like this:
 
-	mount /dev/hda6 /var/fscache/ -o user_xattr
+	mount /dev/hda6 /var/cache/fscache/ -o user_xattr
 
 All other requirements should be met by using a RHEL5+ or FC6+ kernel and using
 Ext3 (ReiserFS and XFS will also meet the requirements).  See the "Further
@@ -258,9 +258,9 @@ particular NFS share/volume/export, and "no" when it hasn't.
 RELOCATING THE CACHE
 ====================
 
-By default, the cache is located in /var/fscache, but this may be undesirable.
-Unless SELinux is being used in enforcing mode, relocating the cache is
-trivially a matter of changing the "dir" line in /etc/cachefilesd.
+By default, the cache is located in /var/cache/fscache, but this may be
+undesirable.  Unless SELinux is being used in enforcing mode, relocating the
+cache is trivially a matter of changing the "dir" line in /etc/cachefilesd.
 
 However, if SELinux is being used in enforcing mode, then it's not that
 simple.  The security policy that governs access to the cache must be changed.

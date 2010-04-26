@@ -98,7 +98,7 @@ This mask can also be set through /sys/module/cachefiles/parameters/debug.
 As an example, consider the following:
 .P
 .RS
-dir /var/fscache
+dir /var/cache/fscache
 .br
 secctx cachefiles_kernel_t
 .br
@@ -113,12 +113,13 @@ bstop 3%
 secctx system_u:system_r:cachefiles_kernel_t:s0
 .RE
 .P
-This places the cache storage objects in a directory called "/var/fscache",
-names the cache "mycache", permits the cache to run freely as long as there's
-at least 10% free space on /var/fscache/, starts culling the cache when the
-free space drops below 7% and stops writing new stuff into the cache if the
-amount of free space drops below 3%.  If the cache is suspended, it won't
-reactivate until the amount of free space rises again to 10% or better.
+This places the cache storage objects in a directory called
+"/var/cache/fscache", names the cache "mycache", permits the cache to run
+freely as long as there's at least 10% free space on /var/cache/fscache/,
+starts culling the cache when the free space drops below 7% and stops writing
+new stuff into the cache if the amount of free space drops below 3%.  If the
+cache is suspended, it won't reactivate until the amount of free space rises
+again to 10% or better.
 .P
 Furthermore, this will tell the kernel module the security context it should
 use when accessing the cache (SELinux is assumed to be the LSM in this
