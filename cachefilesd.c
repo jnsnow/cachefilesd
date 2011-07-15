@@ -1322,7 +1322,7 @@ dir_read_complete:
 
 	scan = curr->parent;
 	if (!scan) {
-		info("Scan complete");
+		debug(1, "Scan complete");
 		decant_cull_table();
 	}
 
@@ -1368,7 +1368,7 @@ static void decant_cull_table(void)
 	if (oldest_ready == -1) {
 		copy = oldest_build + 1;
 
-		info("Decant (all %d)", copy);
+		debug(1, "Decant (all %d)", copy);
 
 		n = copy * sizeof(cullready[0]);
 		memcpy(cullready, cullbuild, n);
@@ -1392,7 +1392,7 @@ static void decant_cull_table(void)
 		copy = space;
 	leave = avail - copy;
 
-	info("Decant (%d/%d to %d)", copy, avail, space);
+	debug(1, "Decant (%d/%d to %d)", copy, avail, space);
 
 	/* make a hole in the ready table transfer "copy" elements from the end
 	 * of cullbuild (oldest) to the beginning of cullready (youngest)

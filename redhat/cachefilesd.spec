@@ -83,6 +83,9 @@ fi
 %{_localstatedir}/cache/fscache
 
 %changelog
+* Fri Jul 15 2011 David Howells <dhowells@redhat.com>
+- Downgrade all the culling messages to debug level [RH BZ 660347].
+
 * Fri Jun 18 2010 David Howells <dhowells@redhat.com>
 - Fix the initscript to have the appropriate parseable description and exit codes.
 
