@@ -2,21 +2,24 @@
 #
 # cachefilesd    Start up and shut down the cachefilesd daemon
 #
+### BEGIN INIT INFO
+# Provides: fscache
+# Required-Start: $local_fs $time
+# Required-Stop: $local_fs
+# Default-Start: 2 3 4 5
+# Default-Stop: 0 1 6
+# Short-Description: Control the persistent network fs caching service
+# Description: CacheFiles provides persistent local caching for network (and
+#              other) filesystems in a directory on a locally mounted disk.
+### END INIT INFO
+#
 # chkconfig: - 13 87
 # description: Starts user-level daemon that manages the caching files \
 #	       used by Network Filsystems
+#
 
 # Source function library.
 . /etc/init.d/functions
-
-# Source networking configuration.
-if [ ! -f /etc/sysconfig/network ]; then
-    exit 0
-fi
-. /etc/sysconfig/network
-
-# Check that networking is up.
-[ "${NETWORKING}" = "no" ] && exit 0
 
 
 RETVAL=0
@@ -33,60 +36,93 @@ OPTIONS="-f $CONFFILE"
 # Check for and source configuration file otherwise set defaults
 [ -f /etc/sysconfig/$PROG ] && . /etc/sysconfig/$PROG
 
-case "$1" in 
-  start|condstart)
-	# Make sure the daemon is not already running.
-	if status $PROG > /dev/null ; then
-		exit 0
+rh_status() {
+    status -p $PIDFILE -l $(basename $LOCKFILE) $PROG
+}
+
+rh_status_q() {
+    rh_status >/dev/null 2>&1
+}
+
+start() {
+    [ `id -u` -eq 0 ] || return 4
+    [ -x $exec ] || return 5
+    [ -f $config ] || return 6
+
+    # Make sure the daemon is not already running.
+    rh_status_q && return 0
+    rm -f $LOCKFILE
+
+    echo -n $"Starting $PROG: "
+
+    # Set security contexts
+    /sbin/restorecon /sbin/cachefilesd || return 1
+    /sbin/restorecon /dev/cachefiles || return 1
+    /sbin/restorecon -R `awk -- '/^dir/ { print $2 }' $CONFFILE` || return 1
+
+    # Load the cachefiles module if needed
+    [ -x "$MODPROBE" ] && {
+	if ! /sbin/lsmod | grep cachefiles > /dev/null ; then
+	    $MODPROBE cachefiles $MODPROBE_ARGS || return 1
 	fi
-	rm -f $LOCKFILE
+    }
 
-	echo -n $"Starting $PROG: "
+    # Start daemon.
+    daemon --pidfile=$PIDFILE $PROG ${OPTIONS} 2>/dev/null
+    RETVAL=$?
 
-	# Set security contexts 
-	/sbin/restorecon /sbin/cachefilesd
-	/sbin/restorecon /dev/cachefiles
-	/sbin/restorecon -R `awk -- '/^dir/ { print $2 }' $CONFFILE`
+    echo
+    [ $RETVAL -eq 0 ] && touch $LOCKFILE
+    return $RETVAL
+}
 
-	# Load the cachefiles module if needed
-	[ -x "$MODPROBE" ] && {
-		if ! /sbin/lsmod | grep cachefiles > /dev/null ; then
-			 $MODPROBE cachefiles $MODPROBE_ARGS || exit 1
-		fi
-	}
+stop() {
+    [ `id -u` -eq 0 ] || return 4
+    rh_status_q || return 0
 
-	# Start daemon.
-	daemon --pidfile=$PIDFILE $PROG ${OPTIONS}
-	RETVAL=$?
-	echo
-	[ $RETVAL -eq 0 ] && touch $LOCKFILE
+    echo -n $"Shutting down $PROG: "
+    killproc -p $PIDFILE $PROG
+    RETVAL=$?
+
+    echo
+    [ $RETVAL -eq 0 ] && rm -f $LOCKFILE
+    return $RETVAL
+}
+
+usage() {
+    echo $"Usage: $0 {start|stop|restart|force-reload|condrestart|try-restart|status}"
+}
+
+if [ $# -gt 1 ]; then
+    exit 2
+fi
+
+case "$1" in
+    start|condstart)
+	start
 	;;
-  stop)
-	# Stop daemon.
-	echo -n $"Shutting down $PROG: "
-	killproc -p $PIDFILE
-	RETVAL=$?
-	echo
-	[ $RETVAL -eq 0 ] && rm -f $LOCKFILE
+    stop)
+	stop
 	;;
-  status)
-	status $PROG
-	RETVAL=$?
+    restart|force-reload)
+	stop; start
 	;;
-  restart|reload)
-	$0 stop
-	$0 start
-	RETVAL=$?
+    condrestart|try-restart)
+        rh_status_q || exit 0
+        stop ; start
 	;;
-  condrestart)
-	if [ -f $LOCKFILE ]; then
-		$0 restart
-		RETVAL=$?
-	fi
+    reload)
+        usage
+        # unimplemented feature
+        exit 3
+        ;;
+    status)
+        rh_status
+        ;;
+    *)
+	usage
+	exit 2
 	;;
-  *)
-	echo $"Usage: $0 {start|stop|restart|condstart|condrestart|status}"
-	exit 1
 esac
 
-exit $RETVAL
+exit $?

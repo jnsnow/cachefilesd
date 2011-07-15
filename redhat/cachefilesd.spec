@@ -83,6 +83,9 @@ fi
 %{_localstatedir}/cache/fscache
 
 %changelog
+* Fri Jun 18 2010 David Howells <dhowells@redhat.com>
+- Fix the initscript to have the appropriate parseable description and exit codes.
+
 * Wed Apr 28 2010 David Howells <dhowells@redhat.com>
 - Fix the Requires line on selinux-policy-base to be >=, not =.
 
