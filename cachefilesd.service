@@ -1,0 +1,10 @@
+[Unit]
+Description=Local network file caching management daemon
+
+[Service]
+Type=simple
+ExecStartPre=-/sbin/modprobe cachefiles
+ExecStart=/sbin/cachefilesd -n -f /etc/cachefilesd.conf
+
+[Install]
+WantedBy=multi-user.target

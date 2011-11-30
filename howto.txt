@@ -114,12 +114,12 @@ much free space it maintains.  This is, however, optional as defaults are set.
 
 Once the configuration file is in place, just start up the cachefilesd service:
 
-	service cachefilesd start
+	systemd start cachefilesd.service
 
 And the cache is ready to go.  This can be made to happen automatically on boot
 by running this as root:
 
-	chkconfig cachefilesd on
+	systemd enable cachefilesd.service
 
 
 ========================

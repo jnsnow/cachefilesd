@@ -10,9 +10,9 @@ URL:  		http://people.redhat.com/~dhowells/fscache/
 Source0:        http://people.redhat.com/dhowells/fscache/cachefilesd-%{version}.tar.bz2
 
 BuildRoot:      %{_tmppath}/%{name}-%{version}-root-%(%{__id_u} -n)
-BuildRequires: automake, autoconf
-Requires(post): /sbin/chkconfig, /sbin/service
-Requires(preun): /sbin/chkconfig, /sbin/service
+Requires(post): systemd-units
+Requires(preun): systemd-units
+Requires(postun): systemd-units
 Requires:       selinux-policy-base >= 3.7.19-5
 
 %description
@@ -37,7 +37,7 @@ make all
 %install
 rm -rf %{buildroot}
 mkdir -p %{buildroot}/sbin
-mkdir -p %{buildroot}%{_sysconfdir}/rc.d/init.d
+mkdir -p %{buildroot}%{_unitdir}
 mkdir -p %{buildroot}%{_mandir}/{man5,man8}
 mkdir -p %{buildroot}/usr/share/doc/%{name}-%{version}
 mkdir -p %{buildroot}/usr/share/doc/%{name}-selinux-%{version}
@@ -45,29 +45,30 @@ mkdir -p %{buildroot}%{_localstatedir}/cache/fscache
 make DESTDIR=%{buildroot} install
 
 install -m 644 cachefilesd.conf %{buildroot}%{_sysconfdir}
-install -m 755 cachefilesd.initd %{buildroot}%{_sysconfdir}/rc.d/init.d/cachefilesd
+install -m 644 cachefilesd.service %{buildroot}%{_unitdir}/cachefilesd.service
 install -m 644 selinux/move-cache.txt %{buildroot}/usr/share/doc/%{name}-%{version}/
 
 %clean
 rm -rf $RPM_BUILD_ROOT
 
 %post
-/sbin/chkconfig --add %{name}
-
-if [ "$1" -ge 1 ]; then
-	/sbin/service cachefilesd condrestart > /dev/null
+if [ $1 -eq 1 ] ; then 
+    # Initial installation 
+    /bin/systemctl daemon-reload >/dev/null 2>&1 || :
 fi
 
 %preun
-if [ $1 -eq 0 ]; then
-	/sbin/service cachefilesd stop
-	/sbin/chkconfig --del %{name}
+if [ $1 -eq 0 ] ; then
+    # Package removal, not upgrade
+    /bin/systemctl --no-reload disable cachefilesd.service > /dev/null 2>&1 || :
+    /bin/systemctl stop cachefilesd.service > /dev/null 2>&1 || :
 fi
 
 %postun
-if [ $1 -eq 0 ]; then
-	# Fix up non-standard directory context
-	/sbin/restorecon -R %{_localstatedir}/cache/fscache || :
+/bin/systemctl daemon-reload >/dev/null 2>&1 || :
+if [ $1 -ge 1 ] ; then
+    # Package upgrade, not uninstall
+    /bin/systemctl try-restart cachefilesd.service >/dev/null 2>&1 || :
 fi
 
 %files
@@ -79,12 +80,15 @@ fi
 %doc selinux/*.if
 %doc selinux/*.te
 %config(noreplace) %{_sysconfdir}/cachefilesd.conf
-%attr(0755,root,root) %{_sysconfdir}/rc.d/init.d/cachefilesd
 /sbin/*
+%{_unitdir}/*
 %{_mandir}/*/*
 %{_localstatedir}/cache/fscache
 
 %changelog
+* Tue Nov 22 2011 David Howells <dhowells@redhat.com>
+- Move to native systemd management [RH BZ 754811].
+
 * Fri Jul 15 2011 David Howells <dhowells@redhat.com>
 - Downgrade all the culling messages to debug level [RH BZ 660347].
 
