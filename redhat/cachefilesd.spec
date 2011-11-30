@@ -1,25 +1,25 @@
 # % define buildid .local
 
-Name:           cachefilesd
-Version:        0.10.3
-Release:        1%{?dist}%{?buildid}
-Summary:        CacheFiles userspace management daemon
-Group:          System Environment/Daemons
-License:        GPL
-URL:  		http://people.redhat.com/~dhowells/fscache/
-Source0:        http://people.redhat.com/dhowells/fscache/cachefilesd-%{version}.tar.bz2
+Name:		cachefilesd
+Version:	0.10.3
+Release:	1%{?dist}%{?buildid}
+Summary:	CacheFiles user-space management daemon
+Group:		System Environment/Daemons
+License:	GPLv2
+URL:		http://people.redhat.com/~dhowells/fscache/
+Source0:	http://people.redhat.com/dhowells/fscache/cachefilesd-%{version}.tar.bz2
 
-BuildRoot:      %{_tmppath}/%{name}-%{version}-root-%(%{__id_u} -n)
+BuildRoot: %{_tmppath}/%{name}-%{version}-root-%(%{__id_u} -n)
 BuildRequires: systemd-units
 Requires(post): systemd-units
 Requires(preun): systemd-units
 Requires(postun): systemd-units
-Requires:       selinux-policy-base >= 3.7.19-5
+Requires: selinux-policy-base >= 3.7.19-5
 
 %description
-The cachefilesd daemon manages the caching files and directory that are
-that are used by network filesystems such a AFS and NFS to
-do persistent caching to the local disk.
+The cachefilesd daemon manages the caching files and directory that are that
+are used by network file systems such a AFS and NFS to do persistent caching to
+the local disk.
 
 %prep
 %setup -q
@@ -53,8 +53,8 @@ install -m 644 selinux/move-cache.txt %{buildroot}/usr/share/doc/%{name}-%{versi
 rm -rf $RPM_BUILD_ROOT
 
 %post
-if [ $1 -eq 1 ] ; then 
-    # Initial installation 
+if [ $1 -eq 1 ] ; then
+    # Initial installation
     /bin/systemctl daemon-reload >/dev/null 2>&1 || :
 fi
 
@@ -89,6 +89,7 @@ fi
 %changelog
 * Wed Nov 30 2011 David Howells <dhowells@redhat.com>
 - Fix packaging of systemd service file.
+- Fix rpmlint complaints.
 
 * Tue Nov 22 2011 David Howells <dhowells@redhat.com> 0.10.3-1
 - Move to native systemd management [RH BZ 754811].

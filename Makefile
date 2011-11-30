@@ -105,10 +105,15 @@ RPMFLAGS := \
 	--define "buildid $(BUILDID)"
 
 rpm:
+	mkdir -p rpmbuild
+	chmod ug-s rpmbuild
 	mkdir -p rpmbuild/{SPECS,SOURCES,BUILD,BUILDROOT,RPMS,SRPMS}
 	git archive --prefix=cachefilesd-$(VERSION)/ --format tar -o $(SRCBALL) HEAD
 	rpmbuild -ts $(SRCBALL) --define "_srcrpmdir rpmbuild/SRPMS" $(RPMFLAGS)
 	rpmbuild --rebuild $(SRPM) $(RPMBUILDDIRS) $(RPMFLAGS)
+
+rpmlint: rpm
+	rpmlint $(SRPM) $(CURDIR)/rpmbuild/RPMS/*/cachefilesd-{,debuginfo-}$(rpmver).*.rpm
 
 ###############################################################################
 #
