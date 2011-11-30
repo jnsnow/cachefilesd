@@ -1,7 +1,7 @@
 # % define buildid .local
 
 Name:           cachefilesd
-Version:        0.10.2
+Version:        0.10.3
 Release:        1%{?dist}%{?buildid}
 Summary:        CacheFiles userspace management daemon
 Group:          System Environment/Daemons
@@ -86,10 +86,10 @@ fi
 %{_localstatedir}/cache/fscache
 
 %changelog
-* Tue Nov 22 2011 David Howells <dhowells@redhat.com>
+* Tue Nov 22 2011 David Howells <dhowells@redhat.com> 0.10.3-1
 - Move to native systemd management [RH BZ 754811].
 
-* Fri Jul 15 2011 David Howells <dhowells@redhat.com>
+* Fri Jul 15 2011 David Howells <dhowells@redhat.com> 0.10.2-1
 - Downgrade all the culling messages to debug level [RH BZ 660347].
 
 * Fri Jun 18 2010 David Howells <dhowells@redhat.com>
@@ -98,7 +98,7 @@ fi
 * Wed Apr 28 2010 David Howells <dhowells@redhat.com>
 - Fix the Requires line on selinux-policy-base to be >=, not =.
 
-* Fri Apr 23 2010 David Howells <dhowells@redhat.com>
+* Fri Apr 23 2010 David Howells <dhowells@redhat.com> 0.10.1-1
 - The SELinux policies for cachefilesd now live in the selinux-policy RPM, so
   the cachefilesd-selinux RPM is now redundant.
 - Move the default cache dir to /var/cache/fscache.
@@ -106,7 +106,7 @@ fi
   labels are correct.
 - Fix a wildchar that should be a literal dot in the SELinux policy.
 
-* Thu Feb 25 2010 David Howells <dhowells@redhat.com>
+* Thu Feb 25 2010 David Howells <dhowells@redhat.com> 0.10-1
 - Fix the SELinux policies for cachefilesd.
 - Compress the installed policy files.
 
