@@ -10,6 +10,7 @@ URL:  		http://people.redhat.com/~dhowells/fscache/
 Source0:        http://people.redhat.com/dhowells/fscache/cachefilesd-%{version}.tar.bz2
 
 BuildRoot:      %{_tmppath}/%{name}-%{version}-root-%(%{__id_u} -n)
+BuildRequires: systemd-units
 Requires(post): systemd-units
 Requires(preun): systemd-units
 Requires(postun): systemd-units
@@ -86,6 +87,9 @@ fi
 %{_localstatedir}/cache/fscache
 
 %changelog
+* Wed Nov 30 2011 David Howells <dhowells@redhat.com>
+- Fix packaging of systemd service file.
+
 * Tue Nov 22 2011 David Howells <dhowells@redhat.com> 0.10.3-1
 - Move to native systemd management [RH BZ 754811].
 
