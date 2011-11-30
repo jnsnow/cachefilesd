@@ -1,6 +1,8 @@
+# % define buildid .local
+
 Name:           cachefilesd
 Version:        0.10.2
-Release:        1%{?dist}
+Release:        1%{?dist}%{?buildid}
 Summary:        CacheFiles userspace management daemon
 Group:          System Environment/Daemons
 License:        GPL
