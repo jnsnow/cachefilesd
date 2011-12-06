@@ -1,7 +1,7 @@
 # % define buildid .local
 
 Name:		cachefilesd
-Version:	0.10.4
+Version:	0.10.5
 Release:	1%{?dist}%{?buildid}
 Summary:	CacheFiles user-space management daemon
 Group:		System Environment/Daemons
@@ -87,7 +87,7 @@ fi
 %{_localstatedir}/cache/fscache
 
 %changelog
-* Tue Dec 6 2011 David Howells <dhowells@redhat.com>
+* Tue Dec 6 2011 David Howells <dhowells@redhat.com> 0.10.5-1
 - Fix systemd service data according to review comments [RH BZ 754811].
 
 * Tue Dec 6 2011 Dan Horák <dan[at]danny.cz>
