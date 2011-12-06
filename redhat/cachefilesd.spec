@@ -33,7 +33,7 @@ PIE="-fpie"
 export PIE
 CFLAGS="`echo $RPM_OPT_FLAGS $ARCH_OPT_FLAGS $PIE`"
 
-make all
+make all CFLAGS="$CFLAGS"
 
 %install
 rm -rf %{buildroot}
@@ -87,6 +87,9 @@ fi
 %{_localstatedir}/cache/fscache
 
 %changelog
+* Tue Dec 6 2011 Dan Horák <dan[at]danny.cz>
+- use Fedora CFLAGS in build (fixes build on s390)
+
 * Wed Nov 30 2011 David Howells <dhowells@redhat.com> 0.10.4-1
 - Fix packaging of systemd service file.
 - Fix rpmlint complaints.
