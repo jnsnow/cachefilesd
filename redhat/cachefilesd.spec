@@ -87,11 +87,14 @@ fi
 %{_localstatedir}/cache/fscache
 
 %changelog
+* Tue Dec 6 2011 David Howells <dhowells@redhat.com>
+- Fix systemd service data according to review comments [RH BZ 754811].
+
 * Tue Dec 6 2011 Dan Horák <dan[at]danny.cz>
 - use Fedora CFLAGS in build (fixes build on s390)
 
 * Wed Nov 30 2011 David Howells <dhowells@redhat.com> 0.10.4-1
-- Fix packaging of systemd service file.
+- Fix packaging of systemd service file [RH BZ 754811].
 - Fix rpmlint complaints.
 
 * Tue Nov 22 2011 David Howells <dhowells@redhat.com> 0.10.3-1

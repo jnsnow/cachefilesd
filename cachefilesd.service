@@ -3,7 +3,7 @@ Description=Local network file caching management daemon
 
 [Service]
 Type=simple
-ExecStartPre=-/sbin/modprobe cachefiles
+ExecStartPre=-/sbin/modprobe -qab cachefiles
 ExecStart=/sbin/cachefilesd -n -f /etc/cachefilesd.conf
 
 [Install]
