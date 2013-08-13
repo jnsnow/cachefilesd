@@ -27,7 +27,7 @@
  * NUL characters are cause for error
  */
 
-#define CACHEFILESD_VERSION "0.10.2"
+#define CACHEFILESD_VERSION "0.10.6"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -49,6 +49,7 @@
 #include <sys/vfs.h>
 #include <sys/stat.h>
 
+#include "common/fsck.h"
 #include "common/debug.h"
 
 typedef enum objtype {
@@ -107,11 +108,13 @@ static const char *procfile = "/proc/fs/cachefiles";
 static const char *pidfile = "/var/run/cachefilesd.pid";
 static char *cacheroot, *graveyardpath;
 
-static int stop, reap, cull, nocull; //, statecheck;
+int stop;
+static int reap, cull, nocull;
 static int graveyardfd;
 static unsigned long long brun, bcull, bstop, frun, fcull, fstop;
 
-#define cachefd 3
+/* cachefilesd currently supports a single cache. */
+static struct cachefilesd_state *state = NULL;
 
 static __attribute__((noreturn))
 void version(void)
@@ -125,7 +128,8 @@ void help(void)
 {
 	fprintf(stderr,
 		"Format:\n"
-		"  /sbin/cachefilesd [-d]* [-s] [-n] [-p <pidfile>] [-f <configfile>]\n"
+		"  /sbin/cachefilesd [-d]* [-s] [-n] [-p <pidfile>] "
+		"[-f <configfile>]\n"
 		"  /sbin/cachefilesd -v\n"
 		"\n"
 		"Options:\n"
@@ -135,6 +139,8 @@ void help(void)
 		"  -p <pidfile>\tWrite the PID into the file\n"
 		"  -f <configfile>\n"
 		"  -v\tPrint version and exit\n"
+		"  -c\tCheck cache consistency and exit\n"
+		"  -F\tForce a deep-scan.\n"
 		"\tRead the specified configuration file instead of"
 		" /etc/cachefiles.conf\n");
 
@@ -202,124 +208,31 @@ static void write_pidfile(void)
 		oserror("Unable to write PID file: %s", pidfile);
 }
 
-/*****************************************************************************/
-/*
- * start up the cache and go
- */
-int main(int argc, char *argv[])
+
+void read_config(const char *configfile, char offline)
 {
-	struct stat st;
 	unsigned lineno;
-	ssize_t n;
 	size_t m;
-	FILE *config;
 	char *line, *cp;
+	ssize_t n;
+	struct stat st;
 	long page_size;
-	int _cachefd, nullfd, opt, loop, open_max, nodaemon = 0;
+	FILE *fh;
 
-	/* handle help request */
-	if (argc == 2 && strcmp(argv[1], "--help") == 0)
-		help();
-
-	if (argc == 2 && strcmp(argv[1], "--version") == 0)
-		version();
-
-	/* parse the arguments */
-	while (opt = getopt(argc, argv, "dsnf:p:v"),
-	       opt != EOF
-	       ) {
-		switch (opt) {
-		case 'd':
-			/* turn on debugging */
-			xdebug++;
-			break;
-
-		case 's':
-			/* disable syslog writing */
-			xnolog = 1;
-			break;
-
-		case 'n':
-			/* don't daemonise */
-			nodaemon = 1;
-			break;
-
-		case 'f':
-			/* use a specific config file */
-			configfile = optarg;
-			break;
-
-		case 'p':
-			/* use a specific PID file */
-			pidfile = optarg;
-			break;
-
-		case 'v':
-			/* print the version and exit */
-			version();
-
-		default:
-			opterror("Unknown commandline option '%c'", optopt);
-		}
-	}
-
-	/* read various parameters */
 	page_size = sysconf(_SC_PAGESIZE);
 	if (page_size < 0)
 		oserror("Unable to get page size");
 
-	open_max = sysconf(_SC_OPEN_MAX);
-	if (open_max < 0)
-		oserror("Unable to get max open files");
-
-	/* become owned by root */
-	if (setresuid(0, 0, 0) < 0)
-		oserror("Unable to set UID to 0");
-
-	if (setresgid(0, 0, 0) < 0)
-		oserror("Unable to set GID to 0");
-
-	/* just in case... */
-	sync();
-
-	/* open the devfile or the procfile on fd 3 */
-	_cachefd = open(devfile, O_RDWR);
-	if (_cachefd < 0) {
-		if (errno != ENOENT)
-			oserror("Unable to open %s", devfile);
-
-		_cachefd = open(procfile, O_RDWR);
-		if (_cachefd < 0) {
-			if (errno == ENOENT)
-				oserror("Unable to open %s", devfile);
-			oserror("Unable to open %s", procfile);
-		}
-	}
-
-	if (_cachefd != cachefd) {
-		if (dup2(_cachefd, cachefd) < 0)
-			oserror("Unable to transfer cache fd to 3");
-		if (close(_cachefd) < 0)
-			oserror("Close of original cache fd failed");
-	}
-
-	/* open /dev/null */
-	nullfd = open("/dev/null", O_RDWR);
-	if (nullfd < 0)
-		oserror("Unable to open /dev/null");
-
-	/* open the config file */
-	config = fopen(configfile, "r");
-	if (!config)
+	fh = fopen(configfile, "r");
+	if (!fh)
 		oserror("Unable to open %s", configfile);
 
 	/* read the configuration */
 	m = 0;
 	line = NULL;
 	lineno = 0;
-	while (n = getline(&line, &m, config),
-	       n != EOF
-	       ) {
+
+	while (n = getline(&line, &m, fh), n != EOF) {
 		lineno++;
 
 		if (n >= page_size)
@@ -363,7 +276,8 @@ int main(int argc, char *argv[])
 			if (*sp)
 				cfgerror("Invalid cull table size number");
 			if (cts < 12 || cts > 20)
-				cfgerror("Log2 of cull table size must be 12 <= N <= 20");
+				cfgerror("Log2 of cull table size"
+					 " must be 12 <= N <= 20");
 			culltable_size = 1 << cts;
 			continue;
 		}
@@ -391,32 +305,162 @@ int main(int argc, char *argv[])
 			cfgerror("'bind' command not permitted");
 
 		/* pass the config options over to the kernel module */
-		if (write(cachefd, line, strlen(line)) < 0) {
-			if (errno == -ENOMEM || errno == -EIO)
-				oserror("CacheFiles");
-			cfgerror("CacheFiles gave config error: %m");
+		if (!offline) {
+			if (write(cachefd, line, strlen(line)) < 0) {
+				if (errno == -ENOMEM || errno == -EIO)
+					oserror("CacheFiles");
+				cfgerror("CacheFiles gave config error: %m");
+			}
 		}
 	}
 
 	if (line)
 		free(line);
 
-	if (!feof(config))
+	if (!feof(fh))
 		oserror("Unable to read %s", configfile);
 
-	if (fclose(config) == EOF)
+	if (fclose(fh) == EOF)
 		oserror("Unable to close %s", configfile);
 
-	/* allocate the cull tables */
-	if (!nocull) {
-		cullbuild = calloc(culltable_size, sizeof(cullbuild[0]));
-		if (!cullbuild)
-			oserror("calloc");
+}
 
-		cullready = calloc(culltable_size, sizeof(cullready[0]));
-		if (!cullready)
-			oserror("calloc");
+/**
+ * To appease valgrind, primarily.
+ */
+void cachefilesd_cleanup(void)
+{
+	if (root.dir) {
+		closedir(root.dir);
+		root.dir = NULL;
 	}
+
+	if (state) state_destroy(&state);
+
+	free(graveyardpath);
+	free(cacheroot);
+
+
+	graveyardpath = NULL;
+	cacheroot = NULL;
+}
+
+/*****************************************************************************/
+/*
+ * start up the cache and go
+ */
+int main(int argc, char *argv[])
+{
+	int _cachefd, nullfd, opt, loop, open_max, rc, nodaemon = 0;
+	int force_scan = 0;
+	int scan_only = 0;
+
+	/* handle help request */
+	if (argc == 2 && strcmp(argv[1], "--help") == 0)
+		help();
+
+	if (argc == 2 && strcmp(argv[1], "--version") == 0)
+		version();
+
+	/* parse the arguments */
+	while (opt = getopt(argc, argv, "dsnf:p:vFc"),
+	       opt != EOF) {
+		switch (opt) {
+		case 'd':
+			/* turn on debugging */
+			xdebug++;
+			break;
+
+		case 's':
+			/* disable syslog writing */
+			xnolog = 1;
+			break;
+
+		case 'n':
+			/* don't daemonise */
+			nodaemon = 1;
+			break;
+
+		case 'f':
+			/* use a specific config file */
+			configfile = optarg;
+			break;
+
+		case 'p':
+			/* use a specific PID file */
+			pidfile = optarg;
+			break;
+
+		case 'c':
+			/* offline scanning mode.
+			 * Do not engage the kernel. */
+			scan_only = 1;
+			break;
+
+		case 'F':
+			/* Force a deep scan */
+			force_scan = 1;
+			break;
+
+		case 'v':
+			/* print the version and exit */
+			version();
+
+		default:
+			opterror("Unknown commandline option '%c'", optopt);
+		}
+	}
+
+	/* read various parameters */
+	open_max = sysconf(_SC_OPEN_MAX);
+	if (open_max < 0)
+		oserror("Unable to get max open files");
+
+	/* become owned by root */
+	if (setresuid(0, 0, 0) < 0)
+		oserror("Unable to set UID to 0");
+
+	if (setresgid(0, 0, 0) < 0)
+		oserror("Unable to set GID to 0");
+
+	/* just in case... */
+	sync();
+
+	if (scan_only) {
+		/* If we're only doing a scan, do not try
+		 * to engage with the kernel module. */
+		goto rconfig;
+	}
+
+	/* open the devfile or the procfile on fd 3 */
+	_cachefd = open(devfile, O_RDWR);
+	if (_cachefd < 0) {
+		if (errno != ENOENT)
+			oserror("Unable to open %s", devfile);
+
+		_cachefd = open(procfile, O_RDWR);
+		if (_cachefd < 0) {
+			if (errno == ENOENT)
+				oserror("Unable to open %s", devfile);
+			oserror("Unable to open %s", procfile);
+		}
+	}
+
+	if (_cachefd != cachefd) {
+		if (dup2(_cachefd, cachefd) < 0)
+			oserror("Unable to transfer cache fd to 3");
+		if (close(_cachefd) < 0)
+			oserror("Close of original cache fd failed");
+	}
+
+rconfig:
+	/* Read the configuration file. */
+	read_config(configfile, scan_only);
+
+	/* open /dev/null */
+	nullfd = open("/dev/null", O_RDWR);
+	if (nullfd < 0)
+		oserror("Unable to open /dev/null");
 
 	/* leave stdin, stdout, stderr and cachefd open only */
 	if (nullfd != 0)
@@ -431,12 +475,42 @@ int main(int argc, char *argv[])
 	 * will give us our own namespace with no /dev/log */
 	openlog("cachefilesd", LOG_PID, LOG_DAEMON);
 	xopenedlog = 1;
+
+	rc = state_init(&state, cacheroot);
+	if (rc) {
+		debug(0, "Error initializing cache state.");
+		return rc;
+	}
+	state->need_fsck = force_scan;
+
+	/* perform a quick scan. If problems are identified,
+	 * need_fsck will be set to true, and we can handle
+	 * this with a deep scan after we bind the cache.
+	 */
+	if ((rc = cachefilesd_fsck_light(cacheroot, &state))) {
+		debug(0, "Error during preliminary sanity check.");
+		return rc;
+	}
+
+	/* We intend to scan-only, then jump ship. */
+	if (scan_only) {
+		if (state->need_fsck) {
+			rc = cachefilesd_fsck_deep(state);
+			if (rc)
+				debug(0, "Encountered issues during deep scan.");
+			else
+				info("cull_index fsck completed successfully.");
+		}
+		cachefilesd_cleanup();
+		return rc;
+	}
+
 	info("About to bind cache");
 
 	/* now issue the bind command */
 	if (write(cachefd, "bind", 4) < 0)
 		oserror("CacheFiles bind failed");
-
+	state->bound = 1;
 	info("Bound cache");
 
 	/* we now have a live cache - daemonise the process */
@@ -482,6 +556,7 @@ static void open_cache(void)
 	/* open the cache directory so we can scan it */
 	snprintf(buffer, PATH_MAX, "%s/cache", cacheroot);
 
+	debug(1, "open_cache(%s)\n", buffer);
 	root.dir = opendir(buffer);
 	if (!root.dir)
 		oserror("Unable to open cache directory");
@@ -512,6 +587,7 @@ static void open_cache(void)
 static void cachefilesd(void)
 {
 	sigset_t sigs, osigs;
+	int rc;
 
 	struct pollfd pollfds[1] = {
 		[0] = {
@@ -544,7 +620,8 @@ static void cachefilesd(void)
 
 		/* sleep without racing on reap and cull with the signal
 		 * handlers */
-		if (!scan && !reap && !cull) {
+		if (!scan && !reap && !cull &&
+		    !(state->need_fsck && !state->fsck_running)) {
 			if (sigprocmask(SIG_BLOCK, &sigs, &osigs) < 0)
 				oserror("Unable to block signals");
 
@@ -558,6 +635,18 @@ static void cachefilesd(void)
 				oserror("Unable to unblock signals");
 
 			read_cache_state();
+		}
+
+		/*
+		 * If we need to check the consistency of the culling index,
+		 * either at request from the kernel or from an earlier
+		 * preliminary scan, fork off a process to handle this.
+		 */
+		if (state->need_fsck && !state->fsck_running) {
+			/* cachefilesd_fork will set fsck_running = true. */
+			rc = cachefilesd_fork(state);
+			if (rc)
+				error("Error creating scanning process.");
 		}
 
 		if (nocull) {
@@ -590,6 +679,7 @@ static void cachefilesd(void)
 			reap_graveyard();
 	}
 
+	cachefilesd_cleanup();
 	notice("Daemon Terminated");
 	exit(0);
 }
@@ -633,8 +723,7 @@ static void reap_graveyard_aux(const char *dirname)
 		deleted = 0;
 
 		while (ret = readdir_r(dir, &dirent, &de),
-		       ret == 0 && de != NULL
-		       ) {
+		       ret == 0 && de != NULL) {
 			/* ignore "." and ".." */
 			if (dirent.d_name[0] == '.') {
 				if (dirent.d_name[1] == '\0')
@@ -664,7 +753,8 @@ static void reap_graveyard_aux(const char *dirname)
 			/* which we then attempt to remove */
 			debug(1, "rmdir %s", dirent.d_name);
 			if (rmdir(dirent.d_name) < 0)
-				oserror("Unable to remove dir %s", dirent.d_name);
+				oserror("Unable to remove dir %s",
+					dirent.d_name);
 		}
 
 		if (ret < 0)
@@ -707,6 +797,8 @@ static void read_cache_state(void)
 
 		if (strcmp(tok, "cull") == 0)
 			cull = strtoul(arg, NULL, 0);
+		if (strcmp(tok, "fsck") == 0)
+			state->need_fsck |= strtoul(arg, NULL, 0);
 		else if (strcmp(tok, "brun") == 0)
 			brun = strtoull(arg, NULL, 16);
 		else if (strcmp(tok, "bcull") == 0)
@@ -885,33 +977,50 @@ static void put_object(struct object *object)
 		put_object(parent);
 }
 
+
+int destroy_file(int dirfd, struct dirent *de)
+{
+	char namebuf[40];
+	static unsigned uniquifier;
+	struct timeval tv;
+	int rc;
+
+	if (de->d_type != DT_DIR) {
+		if (unlinkat(dirfd, de->d_name, 0) < 0 &&
+		    errno != ENOENT) {
+			rc = errno;
+			debug(0, "Unable to unlink file: %s\n", de->d_name);
+			return rc;
+		}
+	}
+	else {
+		gettimeofday(&tv, NULL);
+		sprintf(namebuf, "x%lxx%xx", tv.tv_sec, uniquifier++);
+
+		if (renameat(dirfd, de->d_name, graveyardfd, namebuf) < 0 &&
+		    errno != ENOENT) {
+			rc = errno;
+			debug(0, "Unable to rename file: %s", de->d_name);
+			return rc;
+		}
+	}
+
+	return EXIT_SUCCESS;
+}
+
 /*****************************************************************************/
 /*
  * destroy an unexpected object
  */
 static void destroy_unexpected_object(struct object *parent, struct dirent *de)
 {
-	static unsigned uniquifier;
-	struct timeval tv;
-	char namebuf[40];
-	int fd;
+	int fd, rc;
 
 	fd = dirfd(parent->dir);
-
-	if (de->d_type != DT_DIR) {
-		if (unlinkat(fd, de->d_name, 0) < 0 &&
-		    errno != ENOENT)
-			oserror("Unable to unlink unexpectedly named file: %s",
-				de->d_name);
-	}
-	else {
-		gettimeofday(&tv, NULL);
-		sprintf(namebuf, "x%lxx%xx", tv.tv_sec, uniquifier++);
-
-		if (renameat(fd, de->d_name, graveyardfd, namebuf) < 0 &&
-		    errno != ENOENT)
-			oserror("Unable to rename unexpectedly named file: %s",
-				de->d_name);
+	rc = destroy_file(fd, de);
+	if (rc) {
+		oserror("Unable to rename unexpectedly named file: %s",
+			de->d_name);
 	}
 }
 
