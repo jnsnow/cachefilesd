@@ -1,4 +1,4 @@
-CFLAGS		:= -g -O2 -Wall
+CFLAGS		:= -g -O2 -std=gnu99 -D_GNU_SOURCE -Wall
 INSTALL		:= install
 DESTDIR		:=
 ETCDIR		:= /etc
@@ -36,10 +36,14 @@ endif
 # Build stuff
 #
 ###############################################################################
+SOURCES=$(wildcard common/*.c)
+OBJS=$(subst .c,.o,$(SOURCES))
+BINS=$(subst .c,,$(wildcard *.c))
+
 all: cachefilesd
 
-cachefilesd: cachefilesd.c Makefile
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
+cachefilesd: Makefile cachefilesd.c $(OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(subst $<,,$^)
 
 ###############################################################################
 #
@@ -62,7 +66,7 @@ install: all
 ###############################################################################
 clean:
 	$(RM) cachefilesd
-	$(RM) *.o *~
+	$(RM) $(OBJS) $(BINS) *~
 	$(RM) debugfiles.list debugsources.list
 
 distclean: clean

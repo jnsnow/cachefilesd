@@ -31,8 +31,7 @@ PIE="-fPIE"
 PIE="-fpie"
 %endif
 export PIE
-CFLAGS="`echo $RPM_OPT_FLAGS $ARCH_OPT_FLAGS $PIE`"
-
+CFLAGS="`echo $RPM_OPT_FLAGS $ARCH_OPT_FLAGS $PIE -D_GNU_SOURCE`"
 make all CFLAGS="$CFLAGS"
 
 %install

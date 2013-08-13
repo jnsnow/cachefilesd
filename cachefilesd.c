@@ -29,7 +29,6 @@
 
 #define CACHEFILESD_VERSION "0.10.2"
 
-#define _GNU_SOURCE
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,6 +48,8 @@
 #include <sys/time.h>
 #include <sys/vfs.h>
 #include <sys/stat.h>
+
+#include "common/debug.h"
 
 typedef enum objtype {
 	OBJTYPE_INDEX,
@@ -106,7 +107,6 @@ static const char *procfile = "/proc/fs/cachefiles";
 static const char *pidfile = "/var/run/cachefilesd.pid";
 static char *cacheroot, *graveyardpath;
 
-static int xdebug, xnolog, xopenedlog;
 static int stop, reap, cull, nocull; //, statecheck;
 static int graveyardfd;
 static unsigned long long brun, bcull, bstop, frun, fcull, fstop;
@@ -140,67 +140,6 @@ void help(void)
 
 	exit(2);
 }
-
-static __attribute__((noreturn, format(printf, 2, 3)))
-void __error(int excode, const char *fmt, ...)
-{
-	va_list va;
-
-	if (xnolog) {
-		va_start(va, fmt);
-		vfprintf(stderr, fmt, va);
-		va_end(va);
-	}
-	else {
-		if (!xopenedlog) {
-			openlog("cachefilesd", LOG_PID, LOG_DAEMON);
-			xopenedlog = 1;
-		}
-
-		va_start(va, fmt);
-		vsyslog(LOG_ERR, fmt, va);
-		va_end(va);
-
-		closelog();
-	}
-
-	exit(excode);
-}
-
-#define error(FMT,...)		__error(3, "Internal error: "FMT"\n" ,##__VA_ARGS__)
-#define oserror(FMT,...)	__error(1, FMT": errno %d (%m)\n" ,##__VA_ARGS__ ,errno)
-#define cfgerror(FMT,...)	__error(2, "%s:%d:"FMT"\n", configfile, lineno ,##__VA_ARGS__)
-#define opterror(FMT,...)	__error(2, FMT"\n" ,##__VA_ARGS__)
-
-static __attribute__((format(printf, 3, 4)))
-void __message(int dlevel, int level, const char *fmt, ...)
-{
-	va_list va;
-
-	if (dlevel <= xdebug) {
-		if (xnolog) {
-			va_start(va, fmt);
-			vfprintf(stderr, fmt, va);
-			va_end(va);
-		}
-		else if (!xnolog) {
-			if (!xopenedlog) {
-				openlog("cachefilesd", LOG_PID, LOG_DAEMON);
-				xopenedlog = 1;
-			}
-
-			va_start(va, fmt);
-			vsyslog(level, fmt, va);
-			va_end(va);
-
-			closelog();
-		}
-	}
-}
-
-#define info(FMT,...)		__message(0,  LOG_INFO,   FMT"\n" ,##__VA_ARGS__)
-#define debug(DL, FMT,...)	__message(DL, LOG_DEBUG,  FMT"\n" ,##__VA_ARGS__)
-#define notice(FMT,...)		__message(0,  LOG_NOTICE, FMT"\n" ,##__VA_ARGS__)
 
 static void open_cache(void);
 static void cachefilesd(void) __attribute__((noreturn));
