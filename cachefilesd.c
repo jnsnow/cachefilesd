@@ -759,8 +759,12 @@ static void read_cache_state(void)
 			*next++ = '\0';
 
 		arg = strchr(tok, '=');
-		if (arg)
+		if (arg) {
 			*arg++ = '\0';
+		} else {
+			debug(0, "Warning: malformed output from kernel, missing arg to [%s]", tok);
+			continue;
+		}
 
 		if (strcmp(tok, "cull") == 0)
 			cull = strtoul(arg, NULL, 0);
