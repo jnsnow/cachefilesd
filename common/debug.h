@@ -1,4 +1,4 @@
-/* 
+/*
  *
  * Copyright (C) 2006-2007 Red Hat, Inc. All Rights Reserved.
  * Written by David Howells (dhowells@redhat.com)
@@ -15,6 +15,9 @@
 
 #include <syslog.h>
 #include <sys/time.h>
+#ifdef _USE_VALGRIND
+#include <valgrind/memcheck.h>
+#endif
 
 extern int xdebug, xnolog, xopenedlog;
 extern char perrorbuff[80];

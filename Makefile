@@ -40,6 +40,13 @@ SOURCES=$(wildcard common/*.c)
 OBJS=$(subst .c,.o,$(SOURCES))
 BINS=$(subst .c,,$(wildcard *.c))
 
+# If the user is trying to debug, and valgrind exists ...
+ifeq ($(findstring -g,$(CFLAGS)),-g)
+	ifneq ($(wildcard /usr/include/valgrind/memcheck.h),)
+	CFLAGS += -D_USE_VALGRIND
+	endif
+endif
+
 all: cachefilesd
 
 cachefilesd: Makefile cachefilesd.c $(OBJS)
