@@ -51,6 +51,7 @@
 
 #include "common/fsck.h"
 #include "common/debug.h"
+#include "common/cull.h"
 
 typedef enum objtype {
 	OBJTYPE_INDEX,
@@ -59,48 +60,14 @@ typedef enum objtype {
 	OBJTYPE_INTERMEDIATE,
 } objtype_t;
 
-struct object {
-	struct object	*parent;	/* parent dir of this object (or NULL) */
-	struct object	*children;	/* children of this object */
-	struct object	*next;		/* next child of parent */
-	struct object	*prev;		/* previous child of parent */
-	DIR		*dir;		/* this object's directory (or NULL for data obj) */
-	ino_t		ino;		/* inode number of this object */
-	int		usage;		/* number of users of this object */
-	char		empty;		/* T if directory empty */
-	char		new;		/* T if object new */
-	char		cullable;	/* T if object now cullable */
-	objtype_t	type;		/* type of object */
-	time_t		atime;		/* last access time on this object */
-	char		name[1];	/* name of this object */
-};
-
-/* cache root representation */
-static struct object root = {
-	.parent		= NULL,
-	.usage		= 2,
-	.type		= OBJTYPE_INDEX,
-};
-
-static int nobjects = 1;
+DIR *rootdir = NULL;
 static int nopendir = 0;
 
-/* current scan point */
-static struct object *scan = &root;
-static int jumpstart_scan = 0;
-
-/* ranked order of cullable objects
- * - we have two tables: one we're building and one that's full of ready to be
- *   culled objects
- */
+/* ranked order of cullable objects */
+/* 2^12 = 4096 entries */
+static unsigned culltable_exponent = 12;
 static unsigned culltable_size = 4096;
-static struct object **cullbuild;
-static struct object **cullready;
-
-static int oldest_build = -1;
-static int oldest_ready = -1;
-static int ncullable = 0;
-
+static struct queue *cullq;
 
 static const char *configfile = "/etc/cachefilesd.conf";
 static const char *devfile = "/dev/cachefiles";
@@ -111,10 +78,16 @@ static char *cacheroot, *graveyardpath;
 int stop;
 static int reap, cull, nocull;
 static int graveyardfd;
+static int jumpstart_scan = 1;
+static int refresh = 0;
+static int refresh_rate = 30;
 static unsigned long long brun, bcull, bstop, frun, fcull, fstop;
 
 /* cachefilesd currently supports a single cache. */
 static struct cachefilesd_state *state = NULL;
+
+/* Maximum number of retries when we fail to cull anything */
+static const int thrash_limit = 5;
 
 static __attribute__((noreturn))
 void version(void)
@@ -152,17 +125,6 @@ static void cachefilesd(void) __attribute__((noreturn));
 static void reap_graveyard(void);
 static void reap_graveyard_aux(const char *dirname);
 static void read_cache_state(void);
-static int is_object_in_use(const char *filename);
-static void cull_file(const char *filename);
-static void build_cull_table(void);
-static void decant_cull_table(void);
-static void insert_into_cull_table(struct object *object);
-static void put_object(struct object *object);
-static struct object *create_object(struct object *parent, const char *name, struct stat64 *st);
-static void destroy_unexpected_object(struct object *parent, struct dirent *de);
-static int get_dir_fd(struct object *dir);
-static void cull_object(struct object *object);
-static void cull_objects(void);
 
 /*****************************************************************************/
 /*
@@ -184,11 +146,11 @@ static void sigio(int sig)
 
 /*****************************************************************************/
 /*
- * redo scan after a time since the last scan turned up no results
+ * signal to refresh the queue
  */
 static void sigalrm(int sig)
 {
-	jumpstart_scan = 1;
+	refresh = 1;
 }
 
 /*****************************************************************************/
@@ -279,6 +241,7 @@ void read_config(const char *configfile, char offline)
 				cfgerror("Log2 of cull table size"
 					 " must be 12 <= N <= 20");
 			culltable_size = 1 << cts;
+			culltable_exponent = cts;
 			continue;
 		}
 
@@ -330,9 +293,9 @@ void read_config(const char *configfile, char offline)
  */
 void cachefilesd_cleanup(void)
 {
-	if (root.dir) {
-		closedir(root.dir);
-		root.dir = NULL;
+	if (rootdir) {
+		closedir(rootdir);
+		rootdir = NULL;
 	}
 
 	if (state) state_destroy(&state);
@@ -340,6 +303,10 @@ void cachefilesd_cleanup(void)
 	free(graveyardpath);
 	free(cacheroot);
 
+	if (cullq) {
+		delete_queue(cullq);
+		cullq = NULL;
+	}
 
 	graveyardpath = NULL;
 	cacheroot = NULL;
@@ -505,6 +472,14 @@ rconfig:
 		return rc;
 	}
 
+
+	/* Now that the scan is completed and we have state,
+	 * create a culling queue associated with this state. */
+	if (!nocull) {
+		cullq = new_queue(culltable_exponent, state);
+	}
+
+
 	info("About to bind cache");
 
 	/* now issue the bind command */
@@ -557,8 +532,8 @@ static void open_cache(void)
 	snprintf(buffer, PATH_MAX, "%s/cache", cacheroot);
 
 	debug(1, "open_cache(%s)\n", buffer);
-	root.dir = opendir(buffer);
-	if (!root.dir)
+	rootdir = opendir(buffer);
+	if (!rootdir)
 		oserror("Unable to open cache directory");
 	nopendir++;
 
@@ -586,6 +561,11 @@ static void open_cache(void)
  */
 static void cachefilesd(void)
 {
+	struct timeval tv;
+	/* wolfram alpha tells me that an 8 byte unsigned value in usecs
+	 * can span about 584.6 average gregorian millennia,
+	 * so we probably don't have to worry about overflow. */
+	size_t usecs;
 	sigset_t sigs, osigs;
 	int rc;
 
@@ -620,7 +600,7 @@ static void cachefilesd(void)
 
 		/* sleep without racing on reap and cull with the signal
 		 * handlers */
-		if (!scan && !reap && !cull &&
+		if (!jumpstart_scan && !reap && !cull &&
 		    !(state->need_fsck && !state->fsck_running)) {
 			if (sigprocmask(SIG_BLOCK, &sigs, &osigs) < 0)
 				oserror("Unable to block signals");
@@ -652,31 +632,77 @@ static void cachefilesd(void)
 		if (nocull) {
 			cull = 0;
 		} else {
-			if (jumpstart_scan) {
+			/* Is our queue empty? build a new one. */
+			if (jumpstart_scan || (refresh & !cullq->ready)) {
+				if (cullq->ready || cullq->youngest != -1 || cullq->oldest != 0) {
+					debug(2, "Warning: jumpstart_scan ordered when table non-empty.");
+					refresh = 1;
+					continue;
+				}
+
 				jumpstart_scan = 0;
-				if (!stop && !scan) {
-					debug(1, "Refilling cull table");
-					root.usage++;
-					scan = &root;
+				refresh = 0;
+
+				if (!stop) {
+					debug(2, "Building Cull Queue.");
+					timer_start(&tv);
+					build_cull_queue(cullq, 1);
+					usecs = timer_stop(&tv);
+					debug(3, "Build time: %lu; oldest: %u, youngest: %u; ready: %d",
+					      usecs, cullq->oldest, cullq->youngest, cullq->ready);
+
+					/* Order a refresh of the queue in 30 secs. */
+					signal(SIGALRM, sigalrm);
+					alarm(refresh_rate);
 				}
 			}
 
-			if (cull) {
-				if (oldest_ready >= 0)
-					cull_objects();
-				else if (oldest_build < 0)
+			/* Is it time to refresh our queue? do so. */
+			if (refresh) {
+				refresh = 0;
+
+				if (!cullq->ready) {
+					debug(2, "Refresh requested, but queue not ready. ordering new build.");
 					jumpstart_scan = 1;
+					continue;
+				}
+
+				debug(3, "Refreshing queue");
+				timer_start(&tv);
+				queue_refresh(cullq);
+				usecs = timer_stop(&tv);
+				debug(3, "Refresh time: %lu; oldest: %u, youngest: %u; ready: %d",
+				      usecs, cullq->oldest, cullq->youngest, cullq->ready);
+
+				/* And make sure to order another refresh. */
+				signal(SIGALRM, sigalrm);
+				alarm(refresh_rate);
 			}
 
-			if (scan)
-				build_cull_table();
-
-			if (!scan && oldest_ready < 0 && oldest_build >= 0)
-				decant_cull_table();
+			/* Do we need to cull something? */
+			if (cull) {
+				/* We've got stuff ready to cull: */
+				if (cullq->ready) {
+					debug(3, "Invoking cull_objects,");
+					cull_objects(cullq);
+					if (cullq->thrash > thrash_limit)
+						error("Error: Can't find anything to cull! Giving up.");
+					else if (cullq->thrash)
+						debug(0, "Warning: thrashing... (%u)", cullq->thrash);
+				}
+				/* We need to find things to cull: */
+				else {
+					debug(3, "Cull requested, but table not ready.");
+					jumpstart_scan = 1;
+				}
+			}
 		}
 
-		if (reap)
+		if (reap) {
+			debug(3, "Cleaning the graveyard ...");
 			reap_graveyard();
+			debug(3, "...Done cleaning the graveyard.");
+		}
 	}
 
 	cachefilesd_cleanup();
@@ -776,6 +802,7 @@ static void read_cache_state(void)
 	char buffer[4096 + 1], *tok, *next, *arg;
 	int n;
 
+	debug(4,"read_cache_state();");
 	n = read(cachefd, buffer, sizeof(buffer) - 1);
 	if (n < 0)
 		oserror("Unable to read cache state");
@@ -815,168 +842,6 @@ static void read_cache_state(void)
 	} while ((tok = next));
 }
 
-/*****************************************************************************/
-/*
- * find out if an object in the current working directory is in use
- */
-static int is_object_in_use(const char *filename)
-{
-	char buffer[NAME_MAX + 30];
-	int ret, n;
-
-	n = sprintf(buffer, "inuse %s", filename);
-
-	/* command the module */
-	ret = write(cachefd, buffer, n);
-	if (ret < 0 && errno != ESTALE && errno != ENOENT && errno != EBUSY)
-		oserror("Failed to check object's in-use state");
-
-	return ret < 0 && errno == EBUSY ? 1 : 0;
-}
-
-/*****************************************************************************/
-/*
- * cull a file representing an object in the current working directory
- * - requests CacheFiles rename the object "<cwd>/filename" to the graveyard
- */
-static void cull_file(const char *filename)
-{
-	char buffer[NAME_MAX + 30];
-	int ret, n;
-
-	n = sprintf(buffer, "cull %s", filename);
-
-	/* command the module */
-	ret = write(cachefd, buffer, n);
-	if (ret < 0 && errno != ESTALE && errno != ENOENT && errno != EBUSY)
-		oserror("Failed to cull object");
-}
-
-/*****************************************************************************/
-/*
- * create an object from a name and stat details and attach to the parent, if
- * it doesn't already exist
- */
-static struct object *create_object(struct object *parent,
-				    const char *name,
-				    struct stat64 *st)
-{
-	struct object *object, *p, *pr;
-	int len;
-
-	/* see if the parent object already holds a representation of this
-	 * one */
-	pr = NULL;
-	for (p = parent->children; p; pr = p, p = p->next) {
-		if (p->ino <= st->st_ino) {
-			if (p->ino == st->st_ino) {
-				/* it does */
-				p->usage++;
-				return p;
-			}
-
-			break;
-		}
-	}
-
-	/* allocate the object
-	 * - note that struct object reserves space for NUL directly
-	 */
-	len = strlen(name);
-
-	object = calloc(1, sizeof(struct object) + len);
-	if (!object)
-		oserror("Unable to alloc object");
-
-	object->usage = 1;
-	object->new = 1;
-
-	object->ino = st->st_ino;
-	object->atime = st->st_atime;
-	memcpy(object->name, name, len + 1);
-
-	switch (object->name[0]) {
-	case 'I':
-	case 'J':
-		object->type = OBJTYPE_INDEX;
-		break;
-	case 'D':
-	case 'E':
-		object->type = OBJTYPE_DATA;
-		break;
-	case 'S':
-	case 'T':
-		object->type = OBJTYPE_SPECIAL;
-		break;
-	case '+':
-	case '@':
-		object->type = OBJTYPE_INTERMEDIATE;
-		break;
-	default:
-		error("Unexpected file type '%c'", object->name[0]);
-	}
-
-	/* link into the parent's list */
-	parent->usage++;
-	object->parent = parent;
-	object->prev = pr;
-	object->next = p;
-	if (pr)
-		pr->next = object;
-	else
-		parent->children = object;
-	if (p)
-		p->prev = object;
-
-	nobjects++;
-	return object;
-}
-
-/*****************************************************************************/
-/*
- * free up an object, unlinking it from its parent
- */
-static void put_object(struct object *object)
-{
-	struct object *parent;
-
-	if (--object->usage > 0)
-		return;
-
-	nobjects--;
-
-	if (object->cullable)
-		ncullable--;
-
-	/* destroy the object */
-	if (object == &root)
-		error("Can't destroy root object representation");
-
-	if (object->children)
-		error("Destroying object with children: '%s'", object->name);
-
-	if (object->dir) {
-		closedir(object->dir);
-		nopendir--;
-	}
-
-	if (object->prev)
-		object->prev->next = object->next;
-	else
-		object->parent->children = object->next;
-
-	if (object->next)
-		object->next->prev = object->prev;
-
-	parent = object->parent;
-
-	memset(object, 0x6d, sizeof(struct object));
-	free(object);
-
-	if (parent)
-		put_object(parent);
-}
-
 
 int destroy_file(int dirfd, struct dirent *de)
 {
@@ -1006,550 +871,4 @@ int destroy_file(int dirfd, struct dirent *de)
 	}
 
 	return EXIT_SUCCESS;
-}
-
-/*****************************************************************************/
-/*
- * destroy an unexpected object
- */
-static void destroy_unexpected_object(struct object *parent, struct dirent *de)
-{
-	int fd, rc;
-
-	fd = dirfd(parent->dir);
-	rc = destroy_file(fd, de);
-	if (rc) {
-		oserror("Unable to rename unexpectedly named file: %s",
-			de->d_name);
-	}
-}
-
-/*****************************************************************************/
-/*
- * insert an object into the cull table if its old enough
- */
-static void insert_into_cull_table(struct object *object)
-{
-	int y, o, m;
-
-	if (!object)
-		error("NULL object pointer");
-
-	/* just insert if table is empty */
-	if (oldest_build == -1) {
-		object->usage++;
-		oldest_build = 0;
-		cullbuild[0] = object;
-		return;
-	}
-
-	/* insert somewhere if table is not full */
-	if (oldest_build < culltable_size - 1) {
-		object->usage++;
-		oldest_build++;
-
-		/* just insert at end if new oldest object */
-		if (object->atime <= cullbuild[oldest_build - 1]->atime) {
-			cullbuild[oldest_build] = object;
-			return;
-		}
-
-		/* insert at front if new newest object */
-		if (object->atime > cullbuild[0]->atime) {
-			memmove(&cullbuild[1],
-				&cullbuild[0],
-				oldest_build * sizeof(cullbuild[0]));
-
-			cullbuild[0] = object;
-			return;
-		}
-
-		/* if only two objects in list then insert between them */
-		if (oldest_build == 2) {
-			cullbuild[2] = cullbuild[1];
-			cullbuild[1] = object;
-			return;
-		}
-
-		/* insert somewhere in between front and back elements
-		 * of a three object list
-		 * - oldest_build == #objects_currently_in_list
-		 */
-		y = 1;
-		o = oldest_build - 1;
-
-		do {
-			m = (y + o) / 2;
-
-			if (object->atime > cullbuild[m]->atime)
-				o = m;
-			else
-				y = m + 1;
-
-		} while (y < o);
-
-		memmove(&cullbuild[y + 1],
-			&cullbuild[y],
-			(oldest_build - y) * sizeof(cullbuild[0]));
-
-		cullbuild[y] = object;
-		return;
-	}
-
-	/* if table is full then insert only if older than newest */
-	if (oldest_build > culltable_size - 1)
-		error("Cull table overfull");
-
-	if (object->atime >= cullbuild[0]->atime)
-		return;
-
-	/* newest object in table will be displaced by this one */
-	put_object(cullbuild[0]);
-	cullbuild[0] = (void *)(0x6b000000 | __LINE__);
-	object->usage++;
-
-	/* place directly in first slot if second is older */
-	if (object->atime >= cullbuild[1]->atime) {
-		cullbuild[0] = object;
-		return;
-	}
-
-	/* shift everything up one if older than oldest */
-	if (object->atime <= cullbuild[culltable_size - 1]->atime) {
-		memmove(&cullbuild[0],
-			&cullbuild[1],
-			(culltable_size - 1) * sizeof(cullbuild[0]));
-
-		cullbuild[culltable_size - 1] = object;
-		return;
-	}
-
-	/* search the table to find the insertion point
-	 * - it will be between the first and last the slots
-	 * - we know second is younger
-	 */
-	cullbuild[0] = cullbuild[1];
-
-	y = 2;
-	o = culltable_size - 1;
-
-	do {
-		m = (y + o) / 2;
-
-		if (object->atime >= cullbuild[m]->atime)
-			o = m;
-		else
-			y = m + 1;
-
-	} while (y < o);
-
-	if (y == 2) {
-		cullbuild[1] = object;
-		return;
-	}
-
-	memmove(&cullbuild[1],
-		&cullbuild[2],
-		(y - 2) * sizeof(cullbuild[0]));
-
-	cullbuild[y - 1] = object;
-}
-
-/*****************************************************************************/
-/*
- * do the next step in building up the cull table
- */
-static void build_cull_table(void)
-{
-	struct dirent dirent, *de;
-	struct object *curr, *child;
-	struct stat64 st;
-	int loop, fd;
-
-	curr = scan;
-
-	if (!curr->dir) {
-		curr->empty = 1;
-
-		fd = openat(dirfd(curr->parent->dir), curr->name, O_DIRECTORY);
-		if (fd < 0) {
-			if (errno != ENOENT)
-				oserror("Failed to open directory");
-			goto dir_read_complete;
-		}
-
-		curr->dir = fdopendir(fd);
-		if (!curr->dir)
-			oserror("Failed to open directory");
-
-		nopendir++;
-	}
-
-	debug(2, "--> build_cull_table({%s})", curr->name);
-
-	if (fchdir(dirfd(curr->dir)) < 0)
-		oserror("Failed to change current directory");
-
-next:
-	/* read the next directory entry */
-	if (readdir_r(curr->dir, &dirent, &de) < 0) {
-		if (errno == ENOENT)
-			goto dir_read_complete;
-		oserror("Unable to read directory");
-	}
-
-	if (de == NULL)
-		goto dir_read_complete;
-
-	if (dirent.d_name[0] == '.') {
-		if (!dirent.d_name[1] ||
-		    (dirent.d_name[1] == '.' && !dirent.d_name[2]))
-			goto next;
-	}
-
-	debug(2, "readdir '%s'", dirent.d_name);
-
-	switch (dirent.d_type) {
-	case DT_UNKNOWN:
-	case DT_DIR:
-	case DT_REG:
-		break;
-	default:
-		oserror("readdir returned unsupported type %d", dirent.d_type);
-	}
-
-	/* delete any funny looking files */
-	if (memchr("IDSJET+@", dirent.d_name[0], 8) == NULL)
-		goto found_unexpected_object;
-
-	/* see if this object is already known to us */
-	if (fstatat64(dirfd(curr->dir), dirent.d_name, &st, 0) < 0) {
-		if (errno == ENOENT)
-			goto next;
-		oserror("Failed to stat directory");
-	}
-
-	if (!S_ISDIR(st.st_mode) &&
-	    (!S_ISREG(st.st_mode) ||
-	     dirent.d_name[0] == 'I' ||
-	     dirent.d_name[0] == 'J' ||
-	     dirent.d_name[0] == '@' ||
-	     dirent.d_name[0] == '+'))
-		goto found_unexpected_object;
-
-	/* create a representation for this object */
-	child = create_object(curr, dirent.d_name, &st);
-	if (!child && errno == ENOENT)
-		goto next;
-
-	curr->empty = 0;
-
-	if (!child)
-		oserror("Unable to create object");
-
-	/* we consider culling objects at the transition from index object to
-	 * non-index object */
-	switch (child->type) {
-	case OBJTYPE_DATA:
-	case OBJTYPE_SPECIAL:
-		if (!child->new) {
-			/* the child appears to have been retained in the
-			 * culling table already, so we see if it should be
-			 * removed therefrom
-			 */
-			debug(2, "- old child");
-
-			if (st.st_atime <= child->atime) {
-				/* file on disk hasn't been touched */
-				put_object(child);
-				goto next;
-			}
-
-			for (loop = 0; loop <= oldest_ready; loop++)
-				if (cullready[loop] == child)
-					break;
-
-			if (loop == oldest_ready) {
-				/* child was oldest object */
-				cullready[oldest_ready] = (void *)(0x6b000000 | __LINE__);
-				oldest_ready--;
-				put_object(child);
-				goto removed;
-			}
-			else if (loop < oldest_ready) {
-				/* child was somewhere in between */
-				memmove(&cullready[loop],
-					&cullready[loop + 1],
-					(oldest_ready - loop) * sizeof(cullready[0]));
-				cullready[oldest_ready] = (void *)(0x6b000000 | __LINE__);
-				oldest_ready--;
-				put_object(child);
-				goto removed;
-			}
-
-			for (loop = 0; loop <= oldest_build; loop++)
-				if (cullbuild[loop] == child)
-					break;
-
-			if (loop == oldest_build) {
-				/* child was oldest object */
-				cullbuild[oldest_build] = (void *)(0x6b000000 | __LINE__);
-				oldest_build--;
-				put_object(child);
-			}
-			else if (loop < oldest_build) {
-				/* child was somewhere in between */
-				memmove(&cullbuild[loop],
-					&cullbuild[loop + 1],
-					(oldest_build - loop) * sizeof(cullbuild[0]));
-				cullbuild[oldest_build] = (void *)(0x6b000000 | __LINE__);
-				oldest_build--;
-				put_object(child);
-			}
-
-		removed:
-			;
-		}
-
-		/* add objects that aren't in use to the cull table */
-		if (!is_object_in_use(dirent.d_name)) {
-			debug(2, "- insert");
-			child->new = 0;
-			insert_into_cull_table(child);
-		}
-		put_object(child);
-		goto next;
-
-		/* investigate all index and index-intermediate directories */
-	case OBJTYPE_INDEX:
-	case OBJTYPE_INTERMEDIATE:
-		debug(2, "- descend");
-
-		child->new = 0;
-		scan = child;
-
-		debug(2, "<-- build_cull_table({%s})", curr->name);
-		return;
-
-	default:
-		error("Unexpected type");
-	}
-
-	/* we've finished reading a directory - see if we can cull it */
-dir_read_complete:
-	debug(2, "dir_read_complete: u=%d e=%d %s",
-	      curr->usage, curr->empty, curr->name);
-
-	if (curr->dir) {
-		if (curr != &root) {
-			closedir(curr->dir);
-			curr->dir = NULL;
-			nopendir--;
-		}
-		else {
-			rewinddir(curr->dir);
-		}
-	}
-
-	if (curr->usage == 1 && curr->empty) {
-		/* attempt to cull unpinned empty intermediate and index
-		 * objects */
-		if (fchdir(dirfd(curr->parent->dir)) < 0)
-			oserror("Failed to change current directory");
-
-		switch (curr->type) {
-		case OBJTYPE_INDEX:
-			cull_file(curr->name);
-			break;
-
-		case OBJTYPE_INTERMEDIATE:
-			unlinkat(dirfd(curr->parent->dir), curr->name,
-				 AT_REMOVEDIR);
-			break;
-
-		default:
-			break;
-		}
-	}
-
-	scan = curr->parent;
-	if (!scan) {
-		debug(1, "Scan complete");
-		decant_cull_table();
-	}
-
-	debug(2, "<-- build_cull_table({%s})", curr->name);
-	put_object(curr);
-	return;
-
-	/* delete unexpected objects that we've found */
-found_unexpected_object:
-	debug(2, "found_unexpected_object");
-
-	destroy_unexpected_object(curr, &dirent);
-	goto next;
-}
-
-/*****************************************************************************/
-/*
- * decant cull entries from the build table to the ready table and enable them
- */
-static void decant_cull_table(void)
-{
-	int loop, space, avail, copy, leave, n;
-
-	if (scan)
-		error("Can't decant cull table whilst scanning");
-
-	/* if nothing there, scan again in a short while */
-	if (oldest_build < 0) {
-		signal(SIGALRM, sigalrm);
-		alarm(30);
-		return;
-	}
-
-	/* mark the new entries cullable */
-	for (loop = 0; loop <= oldest_build; loop++) {
-		if (!cullbuild[loop]->cullable) {
-			cullbuild[loop]->cullable = 1;
-			ncullable++;
-		}
-	}
-
-	/* if the ready table is empty, copy the whole lot across */
-	if (oldest_ready == -1) {
-		copy = oldest_build + 1;
-
-		debug(1, "Decant (all %d)", copy);
-
-		n = copy * sizeof(cullready[0]);
-		memcpy(cullready, cullbuild, n);
-		memset(cullbuild, 0x6e, n);
-		oldest_ready = oldest_build;
-		oldest_build = -1;
-		goto check;
-	}
-
-	/* decant some of the build table if there's space */
-	space = culltable_size - (oldest_ready + 1);
-	if (space <= 0) {
-		if (space < 0)
-			error("Less than zero space in ready table");
-		goto check;
-	}
-
-	/* work out how much of the build table we can copy */
-	copy = avail = oldest_build + 1;
-	if (copy > space)
-		copy = space;
-	leave = avail - copy;
-
-	debug(1, "Decant (%d/%d to %d)", copy, avail, space);
-
-	/* make a hole in the ready table transfer "copy" elements from the end
-	 * of cullbuild (oldest) to the beginning of cullready (youngest)
-	 */
-	n = oldest_ready + 1;
-	memmove(&cullready[copy], &cullready[0], n * sizeof(cullready[0]));
-	oldest_ready += copy;
-
-	memcpy(&cullready[0], &cullbuild[leave], copy * sizeof(cullready[0]));
-	memset(&cullbuild[leave], 0x6b, copy * sizeof(cullbuild[0]));
-	oldest_build = leave - 1;
-
-	if (copy + leave > culltable_size)
-		error("Scan table exceeded (%d+%d)", copy, leave);
-
-check:
-	for (loop = 0; loop < oldest_ready; loop++)
-		if (((long)cullready[loop] & 0xf0000000) == 0x60000000)
-			abort();
-}
-
-/*****************************************************************************/
-/*
- * get the directory handle for the given directory
- */
-static int get_dir_fd(struct object *dir)
-{
-	int parentfd, fd;
-
-	debug(1, "get_dir_fd(%s)", dir->name);
-
-	if (dir->dir) {
-		fd = dup(dirfd(dir->dir));
-		if (fd < 0)
-			oserror("Failed to dup fd");
-		debug(1, "cache fd to %d", fd);
-		return fd;
-	}
-
-	parentfd = get_dir_fd(dir->parent);
-
-	fd = openat(parentfd, dir->name, O_DIRECTORY);
-	if (fd < 0 && errno != ENOENT)
-		oserror("Failed to open directory");
-
-	/* return parent fd or -1 if ENOENT */
-	debug(1, "<%d>/%s to %d", parentfd, dir->name, fd);
-	close(parentfd);
-	return fd;
-}
-
-/*****************************************************************************/
-/*
- * cull an object
- */
-static void cull_object(struct object *object)
-{
-	struct stat64 st;
-	int dirfd;
-
-	debug(1, "CULL %s", object->name);
-
-	dirfd = get_dir_fd(object->parent);
-	if (dirfd >= 0) {
-		if (fstatat64(dirfd, object->name, &st, 0) < 0) {
-			if (errno != ENOENT)
-				oserror("Failed to re-stat object");
-
-			close(dirfd);
-			goto object_already_gone;
-		}
-
-		if (fchdir(dirfd) < 0)
-			oserror("Failed to change current directory");
-		if (object->atime >= st.st_atime)
-			cull_file(object->name);
-
-		close(dirfd);
-	}
-
-object_already_gone:
-	put_object(object);
-}
-
-/*****************************************************************************/
-/*
- * consider starting a cull
- */
-static void cull_objects(void)
-{
-	if (ncullable <= 0)
-		error("Cullable object count is inconsistent");
-
-	if (cullready[oldest_ready]->cullable) {
-		cull_object(cullready[oldest_ready]);
-		cullready[oldest_ready] = (void *)(0x6b000000 | __LINE__);
-		oldest_ready--;
-	}
-
-	/* must start refilling the cull table */
-	if (!scan && oldest_build <= culltable_size / 2 + 2) {
-		decant_cull_table();
-
-		debug(1, "Refilling cull table");
-		root.usage++;
-		scan = &root;
-	}
 }
