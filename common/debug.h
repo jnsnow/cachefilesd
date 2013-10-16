@@ -33,27 +33,33 @@ void __error(int excode, const char *fmt, ...);
 __attribute__((format(printf, 3, 4)))
 void __message(int dlevel, int level, const char *fmt, ...);
 
-#define warning(FMT,...)        __message(0,  LOG_WARNING,FMT"\n" ,##__VA_ARGS__)
+#define warning(FMT,...)	__message(0,  LOG_WARNING,FMT"\n" ,##__VA_ARGS__)
 #define notice(FMT,...)		__message(0,  LOG_NOTICE, FMT"\n" ,##__VA_ARGS__)
-#define info(FMT,...)		__message(0,  LOG_INFO,   FMT"\n" ,##__VA_ARGS__)
+#define info(FMT,...)		__message(0,  LOG_INFO,	  FMT"\n" ,##__VA_ARGS__)
 #define debug(DL, FMT,...)	__message(DL, LOG_DEBUG,  FMT"\n" ,##__VA_ARGS__)
-#define debug_nocr(DL, FMT,...) __message(DL, LOG_DEBUG,  FMT     ,##__VA_ARGS__)
-#define dperror(FMT,...)        __message(0,  LOG_ERR,    FMT": %m\n", ##__VA_ARGS__)
+#define debug_nocr(DL, FMT,...) __message(DL, LOG_DEBUG,  FMT	  ,##__VA_ARGS__)
+#define dperror(FMT,...)	__message(0,  LOG_ERR,	  FMT": %m\n", ##__VA_ARGS__)
 
-#define err_chk(cond,rc,str,lbl) if (cond) {	\
+
+#define usrerr(cond, act, str, ...)		\
+	if ((cond)) {				\
+		debug(0, str, ##__VA_ARGS__);	\
+		act;				\
+	}
+#define syserr(cond, rc, act, str, ...)		\
+	if ((cond)) {				\
 		rc = errno;			\
-		dperror(str);			\
-		goto lbl;			\
+		dperror(str, ##__VA_ARGS__);	\
+		act;				\
 	}
-
-#define errchk_e(cond,rc,val,str,lbl) if (cond) {	\
-		dperror(str);				\
-		rc = val;				\
-		goto lbl;				\
-	}
-
-#define err_chk_rc(cond,str,lbl) err_chk(cond,rc,str,lbl)
-
+#define ret_usrerr(cond, str, ...)			\
+	usrerr(cond, return rc, str, ##__VA_ARGS__)
+#define jmp_usrerr(cond, branch, str, ...)		\
+	usrerr(cond, goto branch, str, ##__VA_ARGS__)
+#define ret_syserr(cond, str, ...)			\
+	syserr(cond, rc, return rc, str, ##__VA_ARGS__)
+#define jmp_syserr(cond, branch, str, ...)			\
+	syserr(cond, rc, goto branch, str, ##__VA_ARGS__)
 
 /* Some duration helpers for debugging */
 static inline void timer_start(struct timeval *tv)
