@@ -17,15 +17,14 @@ enum cullslot {
 typedef uint32_t atime_t;
 typedef uint32_t slot_t;
 
-extern int destroy_file(int dirfd, struct dirent *de);
-
 extern void cachefilesd_cleanup(void);
 
 /* Exported so that the fsck thread can request the daemon to stop. */
 extern int stop;
 
-/* Exported so the fsck thread can communicated with the kernel. */
+/* Exported so the fsck thread can communicate with the kernel. */
 #define cachefd 3
+extern int graveyardfd;
 
 /* Inline functions for getting byte-offsets into cull_index and cull_atimes */
 __attribute__((pure)) static inline size_t

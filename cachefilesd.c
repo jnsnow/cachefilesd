@@ -76,8 +76,8 @@ static const char *pidfile = "/var/run/cachefilesd.pid";
 static char *cacheroot, *graveyardpath;
 
 int stop;
+int graveyardfd = -1;
 static int reap, cull, nocull;
-static int graveyardfd;
 static int jumpstart_scan = 1;
 static int refresh = 0;
 static int refresh_rate = 30;
@@ -121,6 +121,7 @@ void help(void)
 }
 
 static void open_cache(void);
+static void open_graveyard(void);
 static void cachefilesd(void) __attribute__((noreturn));
 static void reap_graveyard(void);
 static void reap_graveyard_aux(const char *dirname);
@@ -395,7 +396,7 @@ int main(int argc, char *argv[])
 
 	if (scan_only) {
 		/* If we're only doing a scan, do not try
-		 * to engage with the kernel module. */
+		 * to engage with the kernel module. -- jump ahead a pinch. */
 		goto rconfig;
 	}
 
@@ -443,12 +444,6 @@ rconfig:
 	openlog("cachefilesd", LOG_PID, LOG_DAEMON);
 	xopenedlog = 1;
 
-	rc = state_init(&state, cacheroot);
-	if (rc) {
-		debug(0, "Error initializing cache state.");
-		return rc;
-	}
-	state->need_fsck = force_scan;
 
 	/* perform a quick scan. If problems are identified,
 	 * need_fsck will be set to true, and we can handle
@@ -458,11 +453,23 @@ rconfig:
 		debug(0, "Error during preliminary sanity check.");
 		return rc;
 	}
+	if (!state->need_fsck && !force_scan) {
+		info("No problems detected.");
+		info("If you wish to FORCE a thorough scan, re-run with -F.");
+	}
+
+	/* Don't clobber problems if they were already found */
+	if (!state->need_fsck)
+		state->need_fsck = force_scan;
 
 	/* We intend to scan-only, then jump ship. */
 	if (scan_only) {
 		if (state->need_fsck) {
-			rc = cachefilesd_fsck_deep(state);
+			/* needed for deleting files while detached from kernel. */
+			open_graveyard();
+
+			/* kick off the party; do not fork/detach. */
+			rc = cachefilesd_fsck_deep(state, 0);
 			if (rc)
 				debug(0, "Encountered issues during deep scan.");
 			else
@@ -525,7 +532,6 @@ rconfig:
  */
 static void open_cache(void)
 {
-	struct statfs sfs;
 	char buffer[PATH_MAX + 1];
 
 	/* open the cache directory so we can scan it */
@@ -537,15 +543,24 @@ static void open_cache(void)
 		oserror("Unable to open cache directory");
 	nopendir++;
 
+	if (graveyardfd < 1)
+		open_graveyard();
+}
+
+static void open_graveyard(void)
+{
+	struct statfs sfs;
+	int tmp;
+
 	/* open the graveyard so we can set a notification on it */
 	if (asprintf(&graveyardpath, "%s/graveyard", cacheroot) < 0)
 		oserror("Unable to copy graveyard name");
 
-	graveyardfd = open(graveyardpath, O_DIRECTORY);
-	if (graveyardfd < 0)
+	tmp = open(graveyardpath, O_DIRECTORY);
+	if (tmp < 0)
 		oserror("Unable to open graveyard directory");
 
-	if (fstatfs(graveyardfd, &sfs) < 0)
+	if (fstatfs(tmp, &sfs) < 0)
 		oserror("Unable to stat cache filesystem");
 
 	if (sfs.f_bsize == -1 ||
@@ -553,6 +568,8 @@ static void open_cache(void)
 	    sfs.f_bfree == -1 ||
 	    sfs.f_bavail == -1)
 		error("Backing filesystem returns unusable statistics through fstatfs()");
+
+	graveyardfd = tmp;
 }
 
 /*****************************************************************************/
@@ -623,8 +640,8 @@ static void cachefilesd(void)
 		 * preliminary scan, fork off a process to handle this.
 		 */
 		if (state->need_fsck && !state->fsck_running) {
-			/* cachefilesd_fork will set fsck_running = true. */
-			rc = cachefilesd_fork(state);
+			/* cachefilesd_fsck_deep(..., true) will set fsck_running = true. */
+			rc = cachefilesd_fsck_deep(state, 1);
 			if (rc)
 				error("Error creating scanning process.");
 		}
@@ -840,35 +857,4 @@ static void read_cache_state(void)
 			fstop = strtoull(arg, NULL, 16);
 
 	} while ((tok = next));
-}
-
-
-int destroy_file(int dirfd, struct dirent *de)
-{
-	char namebuf[40];
-	static unsigned uniquifier;
-	struct timeval tv;
-	int rc;
-
-	if (de->d_type != DT_DIR) {
-		if (unlinkat(dirfd, de->d_name, 0) < 0 &&
-		    errno != ENOENT) {
-			rc = errno;
-			debug(0, "Unable to unlink file: %s\n", de->d_name);
-			return rc;
-		}
-	}
-	else {
-		gettimeofday(&tv, NULL);
-		sprintf(namebuf, "x%lxx%xx", tv.tv_sec, uniquifier++);
-
-		if (renameat(dirfd, de->d_name, graveyardfd, namebuf) < 0 &&
-		    errno != ENOENT) {
-			rc = errno;
-			debug(0, "Unable to rename file: %s", de->d_name);
-			return rc;
-		}
-	}
-
-	return EXIT_SUCCESS;
 }
