@@ -32,6 +32,13 @@ static char in_queue(struct queue *cullq, slot_t slot, atime_t atime, unsigned i
 size_t percent_evicted = 0;
 #endif
 
+
+static void insert_nonfull(struct queue *cullq, slot_t slot, atime_t atime);
+static void insert_full(struct queue *cullq, slot_t slot, atime_t atime);
+static void insert_into_cull_table(struct queue *cullq, slot_t slot, atime_t atime);
+
+bool queue_write(struct queue *cullq, const char *filename);
+
 /******************************************************************************/
 
 
@@ -120,6 +127,76 @@ static char check_consistency(struct queue *cullq)
 }
 #endif
 
+/**
+ * Insert a new slot+atime pair into a "fresh" table.
+ *
+ * @param cullq The queue to insert into
+ * @param slot The slot number of the new item
+ * @param atime The atime associated with this slot
+ */
+static void insert_nonfull(struct queue *cullq,
+			   slot_t slot,
+			   atime_t atime)
+{
+	unsigned i;
+
+	i = cullq->youngest + 1;
+	pair_set(&PAIR(cullq,i), slot, atime);
+	cullq->youngest++;
+
+	if (cullq->youngest == cullq->size - 1) {
+	  cullq->oldest = 0;
+	  /* cullq->ins = insert_full; */
+	  /* update which insert function to use, now */
+	  qsort(&OLDEST(cullq), (cullq->youngest - cullq->oldest) + 1,
+		sizeof(struct pair), pair_cmp);
+	}
+
+	return;
+}
+
+/**
+ * Insert a new slot+atime pair into a fresh, but already full, table.
+ *
+ * @param cullq The queue to insert into
+ * @param slot The slot number of the new item
+ * @param atime The atime associated with this slot
+ */
+static void insert_full(struct queue *cullq,
+			slot_t slot,
+			atime_t atime)
+{
+	unsigned i;
+
+	if (atime >= YOUNGEST(cullq).atime) return;
+	cullq->youngest--;
+
+	/* get insertion point. oldest and newest objects are fast searches O(1) */
+	i = get_insert(cullq, atime);
+
+	/* shift the Ith item to I+1, creating a new insertion point at I.
+	 * The number of items currently in the table is (youngest + 1),
+	 * because 'youngest' is stored as a zero index.
+	 * We therefore move (num - i) objects. */
+	memmove(&PAIR(cullq,i+1),
+		&PAIR(cullq,i),
+		((cullq->youngest + 1) - i) * sizeof(PAIR(cullq,0)));
+
+	pair_set(&PAIR(cullq,i), slot, atime);
+
+	cullq->youngest++;
+
+#ifdef CONST_CHECK
+	if (check_consistency(cullq)) {
+		debug(0,"Failed consistency check, i was %d, atime was %u", i, atime);
+		exit(254);
+	}
+#endif
+
+	return;
+}
+
+
 
 /**
  * Insert a new slot+atime pair into the table.
@@ -202,6 +279,11 @@ void build_cull_queue(struct queue *cullq, char randomize)
 	/* For randomization */
 	unsigned *readlist = NULL;
 
+	if (cullq->youngest != -1) {
+		fprintf(stderr, "skip");
+		return;
+	}
+
 	if (cullq->oldest)
 		error("Inconsistency: build_cull_queue called when the oldest element was not 0.");
 
@@ -241,17 +323,31 @@ void build_cull_queue(struct queue *cullq, char randomize)
 		}
 	}
 
+	/* initial read */
+	{
+		p = 0;
+		chunk = randomize ? readlist[p] : p;
+		lseek(fd, chunk * readbytes, SEEK_SET);
+		slot = chunk * readnum;
+		n = read(fd, abuff, readbytes) / sizeof(atime_t);
+		for ( i = 0; i < n; ++i, ++slot) {
+			insert_nonfull(cullq, slot, abuff[i] - 1);
+		}
+	}
+
 	/* Read the atimes file chunk-by-chunk, either in-order or
 	 * a random chunk at a time. So either we use p linearly,
 	 * or as an index into our randomized chunk-order list. */
-	for (p = 0; p < chunks; ++p) {
+	for (p = 1; p < chunks; ++p) {
 		chunk = randomize ? readlist[p] : p;
 		lseek(fd, chunk * readbytes, SEEK_SET);
 		slot = chunk * readnum;
 
 		n = read(fd, abuff, readbytes) / sizeof(atime_t);
 		for (i = 0; i < n; ++i, ++slot) {
-			insert_into_cull_table(cullq, slot, abuff[i] - 1);
+			//cullq->ins(cullq, slot, abuff[i] - 1);
+			//insert_into_cull_table(cullq, slot, abuff[i] - 1);
+			insert_full(cullq, slot, abuff[i] - 1);
 		}
 	}
 
@@ -291,6 +387,8 @@ struct queue *new_queue(unsigned exponent, struct cachefilesd_state *state)
 	cullq->oldest = 0;
 	cullq->youngest = -1;
 	cullq->thrash = 0;
+
+	/* cullq->ins = insert_into_cull_table; */
 
 	cullq->state = state;
 	return cullq;
@@ -606,6 +704,7 @@ size_t queue_refresh(struct queue *cullq)
 	else if (evicted) qsort(&OLDEST(cullq), (cullq->youngest - cullq->oldest) + 1,
 				sizeof(struct pair), pair_cmp);
 
+
 #ifdef CONST_CHECK
 	if (check_consistency(cullq)) {
 		for (i = 0 ; i < cullq->size; ++i) {
@@ -620,7 +719,31 @@ size_t queue_refresh(struct queue *cullq)
 	 * accurate. The randomized-read ability of build_cull_queue
 	 * is left as an option: it's possible that with a low eviction
 	 * rate that setting this to 0 might yield better speeds. */
+	//cullq->ins = insert_into_cull_table;
 	build_cull_queue(cullq, 1);
 
+	queue_write(cullq, ".cullq.cache");
 	return evicted;
+}
+
+bool queue_write(struct queue *cullq, const char *filename)
+{
+	FILE *fh;
+	int n;
+
+	fh = fopen(filename, "w+");
+	if (!fh) {
+		dperror("Could not open %s for writing", filename);
+		return false;
+	}
+
+	n = fwrite(cullq->queue, sizeof(PAIR(cullq,0)), QSIZE(cullq), fh);
+	if (n < QSIZE(cullq)) {
+		dperror("Could not empty the entire queue to disk");
+		fclose(fh);
+		return false;
+	}
+
+	fclose(fh);
+	return true;
 }

@@ -1,6 +1,3 @@
-/**
- * @file fsck.c
- */
 #include "cachefilesd.h"
 #include "debug.h"
 #include "fsck.h"

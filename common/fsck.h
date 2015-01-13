@@ -1,7 +1,3 @@
-/**
- * @file fsck.h
- * @author John Huston
- */
 #ifndef __VERIFY_H
 #define __VERIFY_H
 

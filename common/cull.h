@@ -43,6 +43,8 @@ struct queue {
 	unsigned thrash;
 	struct pair *queue;
 	struct cachefilesd_state *state;
+
+	void (* ins)(struct queue *, atime_t, slot_t);
 };
 
 void build_cull_queue(struct queue *cullq, char randomize);

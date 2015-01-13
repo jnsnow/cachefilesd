@@ -52,6 +52,10 @@ all: cachefilesd
 cachefilesd: Makefile cachefilesd.c $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(subst $<,,$^)
 
+cull_test: CFLAGS += -DFORCE_EVICT
+cull_test: Makefile cull_test.c common/cull.o common/debug.o
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(subst $<,,$^)
+
 ###############################################################################
 #
 # Install everything
