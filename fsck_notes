@@ -1,0 +1,47 @@
+=== fsck.c abstract ===
+
+Only three routines are exported for use by the cachefiles daemon:
+
+int cachefilesd_fsck_light (const char *cacheroot, cstate **state);
+int cachefilesd_fsck_deep  (cstate *s, bool fork);
+void state_destroy      (cstate **state);
+
+In general, you'll call fsck_light to get state and to see whether the quick checks determine that a deeper look might be necessary.
+The deep scan can then be called either "online" or "offline" (with or without the kernel module's help) and either in the current process or forked off as a separate process.
+
+The "online" or "offline" modes are triggered by if we have bound the cache or not yet.
+
+=== Function Details ===
+
+-fsck_light does some basic checks like looking for the .lock file, making sure the filesizes of the indices are sane, and will create and initialize the state structure. This structure is handed back to the caller. This structure is needed for general purpose operation regardless of whether or not we go on to actually try to scan or fix anything -- this structure is also used to do the general culling operations as well.
+
+-fsck_deep is what actually does the scanning and fixing. it can be forked into the background or not via the second parameter. If forked, it will register its own signal handler to catch the child upon exit and send an all-clear message to the kernel module, so the module knows it can now fully trust the state of the cache index. fsck_deep is a wrapper to fsck_impl, which completes the scan in three phases.
+
+(0) We create a scan state structure which is a child of the general state structure. It is created on-demand and will be dismantled after the scan ends. Unlike the general state structure, this one is not required for general cachefilesd operation and is only created if a deep scan is requested.
+
+(A) Index verification. Each entity (~26 bytes in testing) is loaded in turn. The file handle stored in the record is loaded and converted to a valid file descriptor, then the xattrs of the file received are checked for slot number agreement. files with PINNED slot numbers are removed from the index. Any other file is simply updated to point back to the slot we loaded it from. No effort is made to detect duplicates -- it's possible some files will be "fixed" multiple times.
+
+(B) File verification. We spider recursively down the cache directory and check each file we find for validity including file type, file name, xattr presence and xattr validity. PINNED files are left alone, but otherwise if a file references a slot that doesn't point back to this file, we assume the file is orphaned by the index or is otherwise a duplicate, so we delete the file. We make no effort to correct the index a second time at this stage -- we just delete the file. This way, files with bogus xattr data can't delete valid index data.
+
+(C) Second index verification pass. Files deleted in the previous stage may have left holes in the index if there were duplicate entries, OR, if a file was renamed but in the wrong place (and subsequently deleted), the first index pass may have been unable to detect the stale file handle (moved files appear to retain their ability to be referenced by an older file handle). This second pass will detect any remaining issues and clear out those slots in the index.
+
+-state_destroy
+Closes out any remaining information in the /general/ state structure. If the scan state structure is also not destroyed already, it'll handle that too. Generally not actually used in normal operation, but it's there to make valgrind happy, so why not?
+
+
+=== Notes ===
+
+- I wrote two alternative reading methods, because I wasn't sure what was better... I left them both in for now.
+  Both methods use an "on demand" delayed load style where if a call to .e,g fix_slot(203) is executed, we'll load
+  the data for the page corresponding to slot #203 if it isn't already loaded. Subsequent, linear calls thus avoid
+  redundant data loads.
+
+- Buffer Method:
+	Load a page of the cull_index a page at a time, then load however many atimes as needed to match. This uses the fopen, fread and malloc calls to load data into buffers and check that data as needed. 
+
+- MMAP method:
+	map a page each of the culling index and the atimes index. use mmap and munmap on calls to page_load or page_save.
+
+Both methods have a similar disadvantage: in the file-scanning phase of fsck_impl, we randomly access slots as needed to verify files, so there may be many page loads/saves sporadically as we need to seek to different spots in the file. There may be a better solution if we want to "queue up" file checks and try to lightly order them -- say, buffer up ~157 (number of entities per page) file checks at a time, sort them, then run through the queue ...
+
+...Might be other solutions, but I haven't invested the time to complicate that part of the scanning process. I wanted a little feedback first.
